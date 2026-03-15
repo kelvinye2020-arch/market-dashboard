@@ -1,0 +1,1396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全球指数看板 | Global Index Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: #1a2235;
+            --bg-card-hover: #1f2a40;
+            --border: #2a3654;
+            --text-primary: #e5e7eb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --accent-blue: #3b82f6;
+            --accent-cyan: #06b6d4;
+            --green: #10b981;
+            --green-bg: rgba(16, 185, 129, 0.1);
+            --red: #ef4444;
+            --red-bg: rgba(239, 68, 68, 0.1);
+            --yellow: #f59e0b;
+            --orange: #f97316;
+            --purple: #8b5cf6;
+            --shadow: 0 4px 24px rgba(0,0,0,0.3);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* ===== 顶部导航 ===== */
+        .header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 14px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(12px);
+        }
+
+        .header-left { display: flex; align-items: center; gap: 16px; }
+
+        .logo {
+            width: 40px; height: 40px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 20px; font-weight: bold;
+        }
+
+        .header h1 {
+            font-size: 22px; font-weight: 700;
+            background: linear-gradient(90deg, #fff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-right { display: flex; align-items: center; gap: 16px; }
+
+        .status-badge {
+            display: flex; align-items: center; gap: 8px;
+            padding: 5px 12px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 20px; font-size: 12px; color: var(--green);
+        }
+
+        .status-dot {
+            width: 7px; height: 7px;
+            background: var(--green); border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        .update-time { font-size: 12px; color: var(--text-muted); }
+
+        .btn-refresh {
+            padding: 7px 18px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+            border: none; border-radius: 8px;
+            color: white; font-size: 13px; font-weight: 600;
+            cursor: pointer; transition: all 0.3s;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .btn-refresh:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4); }
+        .btn-refresh:active { transform: translateY(0); }
+        .btn-refresh.loading { opacity: 0.7; pointer-events: none; }
+        .btn-refresh .spinner { display: none; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        .btn-refresh.loading .spinner { display: inline-block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ===== 时间选择器工具栏 ===== */
+        .toolbar {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 32px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .toolbar-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .time-presets {
+            display: flex; gap: 4px;
+            background: rgba(255,255,255,0.04);
+            padding: 3px; border-radius: 8px;
+        }
+
+        .preset-btn {
+            padding: 6px 14px; border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 12px; font-weight: 500;
+            border-radius: 6px; cursor: pointer;
+            transition: all 0.2s; white-space: nowrap;
+        }
+        .preset-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.06); }
+        .preset-btn.active { background: var(--accent-blue); color: white; }
+
+        .date-separator {
+            width: 1px; height: 24px;
+            background: var(--border); margin: 0 4px;
+        }
+
+        .date-inputs {
+            display: flex; align-items: center; gap: 8px;
+        }
+
+        .date-input {
+            padding: 6px 12px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px; font-family: inherit;
+            outline: none; transition: border-color 0.2s;
+        }
+        .date-input:focus { border-color: var(--accent-blue); }
+        .date-input::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+
+        .date-to { color: var(--text-muted); font-size: 13px; }
+
+        .btn-apply {
+            padding: 6px 16px;
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 6px;
+            color: var(--accent-blue);
+            font-size: 12px; font-weight: 600;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .btn-apply:hover { background: rgba(59, 130, 246, 0.25); }
+
+        .toolbar-right {
+            margin-left: auto;
+            display: flex; align-items: center; gap: 8px;
+        }
+
+        .klt-toggle {
+            display: flex; gap: 3px;
+            background: rgba(255,255,255,0.04);
+            padding: 2px; border-radius: 6px;
+        }
+
+        .klt-btn {
+            padding: 5px 12px; border: none;
+            background: transparent;
+            color: var(--text-muted); font-size: 12px;
+            border-radius: 5px; cursor: pointer;
+            transition: all 0.2s;
+        }
+        .klt-btn:hover { color: var(--text-secondary); }
+        .klt-btn.active { background: rgba(139, 92, 246, 0.2); color: var(--purple); }
+
+        /* ===== 主内容区 ===== */
+        .main {
+            max-width: 1800px; margin: 0 auto;
+            padding: 20px 32px;
+        }
+
+        /* ===== 指数卡片网格 ===== */
+        .index-cards {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px; margin-bottom: 20px;
+        }
+
+        .index-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px; padding: 16px 18px;
+            cursor: pointer; transition: all 0.3s ease;
+            position: relative; overflow: hidden;
+        }
+        .index-card::before {
+            content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan));
+            opacity: 0; transition: opacity 0.3s;
+        }
+        .index-card:hover { background: var(--bg-card-hover); border-color: var(--accent-blue); transform: translateY(-2px); box-shadow: var(--shadow); }
+        .index-card:hover::before, .index-card.active::before { opacity: 1; }
+        .index-card.active { border-color: var(--accent-blue); background: var(--bg-card-hover); }
+
+        .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+        .card-name { font-size: 14px; font-weight: 600; }
+        .card-code { font-size: 11px; color: var(--text-muted); background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; }
+        .card-price { font-size: 26px; font-weight: 700; margin-bottom: 6px; font-feature-settings: 'tnum'; letter-spacing: -0.5px; }
+        .card-change { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 500; }
+        .card-change span { display: flex; align-items: center; gap: 3px; }
+
+        .up { color: var(--red); }
+        .down { color: var(--green); }
+        .flat { color: var(--text-muted); }
+
+        .card-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+
+        .ytd-badge {
+            display: inline-block; padding: 2px 7px;
+            border-radius: 4px; font-size: 11px; font-weight: 600;
+        }
+        .ytd-badge.positive { background: var(--red-bg); color: var(--red); }
+        .ytd-badge.negative { background: var(--green-bg); color: var(--green); }
+
+        .card-volume {
+            font-size: 11px; color: var(--text-muted);
+            display: flex; align-items: center; gap: 4px;
+        }
+        .card-volume .vol-icon {
+            display: inline-block; width: 12px; height: 8px;
+            background: linear-gradient(0deg, var(--accent-cyan) 0%, transparent 100%);
+            border-radius: 1px 1px 0 0; opacity: 0.6;
+        }
+
+        .card-sparkline { margin-top: 8px; height: 36px; }
+
+        /* ===== 统计行 ===== */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 12px; margin-bottom: 18px;
+        }
+        .stat-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px; padding: 12px 14px;
+            text-align: center;
+        }
+        .stat-label { font-size: 11px; color: var(--text-muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-value { font-size: 18px; font-weight: 700; font-feature-settings: 'tnum'; }
+        .stat-sub { font-size: 11px; margin-top: 3px; }
+
+        /* ===== 图表区域 ===== */
+        .charts-section { display: grid; grid-template-columns: 1fr; gap: 18px; }
+
+        .chart-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px; padding: 20px;
+        }
+
+        .chart-header {
+            display: flex; justify-content: space-between;
+            align-items: center; margin-bottom: 14px;
+        }
+        .chart-title { font-size: 16px; font-weight: 700; }
+
+        .chart-header-controls { display: flex; gap: 8px; align-items: center; }
+
+        .chart-tabs {
+            display: flex; gap: 3px;
+            background: rgba(255,255,255,0.05);
+            padding: 2px; border-radius: 7px;
+        }
+        .chart-tab {
+            padding: 5px 14px; border: none;
+            background: transparent;
+            color: var(--text-secondary); font-size: 12px; font-weight: 500;
+            border-radius: 5px; cursor: pointer; transition: all 0.2s;
+        }
+        .chart-tab:hover { color: var(--text-primary); }
+        .chart-tab.active { background: var(--accent-blue); color: white; }
+
+        .volume-toggle {
+            display: flex; align-items: center; gap: 6px;
+            padding: 5px 12px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border);
+            border-radius: 6px; cursor: pointer;
+            transition: all 0.2s; font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .volume-toggle:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+        .volume-toggle.active { background: rgba(6, 182, 212, 0.12); border-color: var(--accent-cyan); color: var(--accent-cyan); }
+        .volume-toggle .toggle-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%; background: var(--text-muted);
+            transition: background 0.2s;
+        }
+        .volume-toggle.active .toggle-dot { background: var(--accent-cyan); }
+
+        .chart-area { width: 100%; height: 520px; }
+        .chart-area-compare { width: 100%; height: 400px; }
+
+        .compare-section { margin-top: 0; }
+
+        /* ===== 加载状态 ===== */
+        .loading-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(10, 14, 23, 0.85);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 1000; transition: opacity 0.4s;
+        }
+        .loading-overlay.hidden { opacity: 0; pointer-events: none; }
+        .loading-ring {
+            width: 56px; height: 56px;
+            border: 3px solid var(--border); border-top-color: var(--accent-blue);
+            border-radius: 50%; animation: spin 1s linear infinite;
+            margin-bottom: 16px;
+        }
+        .loading-text { font-size: 15px; color: var(--text-secondary); }
+        .loading-sub { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+        /* ===== 错误提示 ===== */
+        .error-toast {
+            position: fixed; top: 80px; right: 32px;
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: var(--red); padding: 12px 20px;
+            border-radius: 10px; font-size: 14px;
+            z-index: 200; opacity: 0; transform: translateX(20px);
+            transition: all 0.3s;
+        }
+        .error-toast.show { opacity: 1; transform: translateX(0); }
+
+        /* ===== 来源标识 ===== */
+        .footer {
+            text-align: center; padding: 20px;
+            font-size: 11px; color: var(--text-muted);
+            border-top: 1px solid var(--border);
+            margin-top: 24px;
+        }
+        .footer a { color: var(--accent-blue); text-decoration: none; }
+
+        /* ===== 响应式 ===== */
+        @media (max-width: 1200px) {
+            .index-cards { grid-template-columns: repeat(3, 1fr); }
+            .stats-row { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 900px) {
+            .index-cards { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 768px) {
+            .header { padding: 12px 16px; flex-wrap: wrap; gap: 10px; }
+            .toolbar { padding: 10px 16px; }
+            .main { padding: 14px 16px; }
+            .index-cards { grid-template-columns: repeat(2, 1fr); }
+            .card-price { font-size: 20px; }
+            .chart-area { height: 380px; }
+            .stats-row { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <!-- 加载遮罩 -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-ring"></div>
+        <div class="loading-text">正在获取最新行情数据...</div>
+        <div class="loading-sub">连接东方财富数据源</div>
+    </div>
+
+    <!-- 错误提示 -->
+    <div class="error-toast" id="errorToast"></div>
+
+    <!-- 顶部导航 -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></div>
+            <div><h1>全球指数看板 <span style="font-size:13px;font-weight:400;color:var(--text-muted);margin-left:4px;">Global Index Dashboard</span></h1></div>
+        </div>
+        <div class="header-right">
+            <div class="status-badge">
+                <div class="status-dot"></div>
+                <span>实时</span>
+            </div>
+            <div class="update-time" id="updateTime">等待更新...</div>
+            <button class="btn-refresh" id="btnRefresh" onclick="refreshData()">
+                <span class="spinner"></span>
+                <span>刷新数据</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- 时间选择工具栏 -->
+    <div class="toolbar">
+        <span class="toolbar-label">时间范围</span>
+        <div class="time-presets" id="timePresets">
+            <button class="preset-btn" data-range="1m" onclick="setPreset('1m', this)">近1月</button>
+            <button class="preset-btn" data-range="3m" onclick="setPreset('3m', this)">近3月</button>
+            <button class="preset-btn" data-range="6m" onclick="setPreset('6m', this)">近6月</button>
+            <button class="preset-btn active" data-range="ytd" onclick="setPreset('ytd', this)">今年以来</button>
+            <button class="preset-btn" data-range="1y" onclick="setPreset('1y', this)">近1年</button>
+            <button class="preset-btn" data-range="3y" onclick="setPreset('3y', this)">近3年</button>
+            <button class="preset-btn" data-range="5y" onclick="setPreset('5y', this)">近5年</button>
+        </div>
+
+        <div class="date-separator"></div>
+
+        <div class="date-inputs">
+            <input type="date" class="date-input" id="dateFrom" />
+            <span class="date-to">至</span>
+            <input type="date" class="date-input" id="dateTo" />
+            <button class="btn-apply" onclick="applyDateRange()">查询</button>
+        </div>
+
+        <div class="toolbar-right">
+            <span class="toolbar-label">K线</span>
+            <div class="klt-toggle" id="kltToggle">
+                <button class="klt-btn active" data-klt="101" onclick="setKlt(101, this)">日线</button>
+                <button class="klt-btn" data-klt="102" onclick="setKlt(102, this)">周线</button>
+                <button class="klt-btn" data-klt="103" onclick="setKlt(103, this)">月线</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主内容 -->
+    <main class="main">
+        <!-- 指数卡片 -->
+        <div class="index-cards" id="indexCards"></div>
+
+        <!-- 统计栏 -->
+        <div class="stats-row" id="statsRow"></div>
+
+        <!-- 图表区 -->
+        <div class="charts-section">
+            <!-- 主图表(走势+成交额) -->
+            <div class="chart-container">
+                <div class="chart-header">
+                    <span class="chart-title" id="chartTitle">上证指数 - 走势</span>
+                    <div class="chart-header-controls">
+                        <div class="volume-toggle active" id="volumeToggle" onclick="toggleVolume()">
+                            <span class="toggle-dot"></span>
+                            <span>成交额</span>
+                        </div>
+                        <div class="chart-tabs">
+                            <button class="chart-tab active" data-type="area" onclick="switchChartType('area', this)">走势图</button>
+                            <button class="chart-tab" data-type="candle" onclick="switchChartType('candle', this)">K线图</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="chart-area" id="mainChart"></div>
+            </div>
+
+            <!-- 全指数对比 -->
+            <div class="chart-container compare-section">
+                <div class="chart-header">
+                    <span class="chart-title" id="compareTitle">涨跌幅对比（归一化）</span>
+                </div>
+                <div class="chart-area-compare" id="compareChart"></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 底部来源标识 -->
+    <footer class="footer">
+        数据来源：东方财富 &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据
+    </footer>
+
+    <script>
+        // ============================================================
+        //  全球指数智能看板 - 纯前端版本（Cloud Edition）
+        //  所有数据直接从浏览器请求东方财富API，无需后端服务
+        // ============================================================
+
+        // ======== 全局状态 ========
+        let allData = {};
+        let activeSecid = "1.000001";
+        let chartType = "area";
+        let showVolume = true;
+        let currentKlt = 101;
+        let currentPreset = "ytd";
+        let mainChartInstance = null;
+        let compareChartInstance = null;
+
+        const INDEX_META = {
+            "1.000001":   { name: "上证指数",     short: "SSE",    color: "#3b82f6" },
+            "100.HSI":    { name: "恒生指数",     short: "HSI",    color: "#ea580c" },
+            "124.HSTECH": { name: "恒生科技指数", short: "HSTECH", color: "#fb923c" },
+            "100.NDX":    { name: "纳斯达克100",  short: "NDX",    color: "#16a34a" },
+            "100.SPX":    { name: "标普500",       short: "SPX",    color: "#4ade80" },
+            "100.N225":   { name: "日经225",       short: "N225",   color: "#f472b6" },
+            "100.KS11":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8" },
+        };
+
+        const INDEX_ORDER = ["1.000001", "100.HSI", "124.HSTECH", "100.NDX", "100.SPX", "100.N225", "100.KS11"];
+
+        // 备用 secid 映射（如果主 secid 不工作）
+        const FALLBACK_SECIDS = {
+            "100.NDX": ["105.NDX", "106.NDX"],
+            "100.SPX": ["105.SPX", "106.SPX"],
+            "100.HSI": ["116.HSI"],
+            "124.HSTECH": ["116.HSTECH", "100.HSTECH"],
+            "100.N225": ["119.N225"],
+            "100.KS11": ["119.KS11"],
+        };
+
+        // ======== JSONP 请求工具 ========
+        let jsonpCounter = 0;
+
+        function jsonpFetch(url, params) {
+            return new Promise((resolve, reject) => {
+                const callbackName = `__jsonp_cb_${Date.now()}_${jsonpCounter++}`;
+                params.cb = callbackName;
+
+                const queryString = Object.entries(params)
+                    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+                    .join("&");
+                const fullUrl = `${url}?${queryString}`;
+
+                // 设置超时
+                const timeout = setTimeout(() => {
+                    cleanup();
+                    reject(new Error("JSONP timeout"));
+                }, 12000);
+
+                function cleanup() {
+                    clearTimeout(timeout);
+                    delete window[callbackName];
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                }
+
+                window[callbackName] = function(data) {
+                    cleanup();
+                    resolve(data);
+                };
+
+                const script = document.createElement("script");
+                script.src = fullUrl;
+                script.onerror = function() {
+                    cleanup();
+                    reject(new Error("JSONP script error"));
+                };
+                document.head.appendChild(script);
+            });
+        }
+
+        // 普通 fetch（带 fallback 到 JSONP）
+        async function apiFetch(url, params) {
+            // 先尝试直接 fetch（支持 CORS 的接口）
+            try {
+                const queryString = Object.entries(params)
+                    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+                    .join("&");
+                const resp = await fetch(`${url}?${queryString}`, {
+                    headers: { "Referer": "https://quote.eastmoney.com/" }
+                });
+                if (resp.ok) {
+                    return await resp.json();
+                }
+            } catch (e) {
+                // fetch 失败（CORS等原因），降级到 JSONP
+            }
+
+            // JSONP 方式
+            return await jsonpFetch(url, params);
+        }
+
+        // ======== 东方财富 API 调用 ========
+        async function fetchKline(secid, beginDate, endDate, klt) {
+            const params = {
+                secid: secid,
+                fields1: "f1,f2,f3,f4,f5,f6",
+                fields2: "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+                klt: String(klt),
+                fqt: "1",
+                beg: beginDate,
+                end: endDate,
+                ut: "fa5fd1943c7b386f172d6893dbbd4dc0",
+            };
+            return await apiFetch("https://push2his.eastmoney.com/api/qt/stock/kline/get", params);
+        }
+
+        async function fetchRealtime(secid) {
+            const params = {
+                secid: secid,
+                fields: "f43,f44,f45,f46,f47,f48,f50,f57,f58,f59,f60,f169,f170,f171",
+                ut: "fa5fd1943c7b386f172d6893dbbd4dc0",
+            };
+            return await apiFetch("https://push2.eastmoney.com/api/qt/stock/get", params);
+        }
+
+        // 带 fallback 的 K线获取
+        async function fetchKlineWithFallback(secid, beginDate, endDate, klt) {
+            // 先尝试主 secid
+            try {
+                const data = await fetchKline(secid, beginDate, endDate, klt);
+                if (data && data.data && data.data.klines && data.data.klines.length > 0) {
+                    return { data, actualSecid: secid };
+                }
+            } catch (e) {
+                console.warn(`[WARN] Primary ${secid} failed:`, e.message);
+            }
+
+            // 尝试备用 secid
+            const fallbacks = FALLBACK_SECIDS[secid] || [];
+            for (const fb of fallbacks) {
+                try {
+                    console.log(`[INFO] Trying fallback ${fb} for ${secid}`);
+                    const data = await fetchKline(fb, beginDate, endDate, klt);
+                    if (data && data.data && data.data.klines && data.data.klines.length > 0) {
+                        return { data, actualSecid: fb };
+                    }
+                } catch (e) {
+                    console.warn(`[WARN] Fallback ${fb} failed:`, e.message);
+                }
+            }
+
+            return { data: null, actualSecid: secid };
+        }
+
+        // 解析 K线数据
+        function parseKlineData(rawData, secid) {
+            if (!rawData || !rawData.data) return null;
+
+            const data = rawData.data;
+            const klines = data.klines || [];
+            const meta = INDEX_META[secid] || { name: secid, short: secid };
+
+            const parsed = {
+                name: data.name || meta.name,
+                code: data.code || "",
+                secid: secid,
+                short: meta.short,
+                dates: [], opens: [], closes: [], highs: [], lows: [],
+                volumes: [], amounts: [], changes: [], change_pcts: [],
+            };
+
+            for (const line of klines) {
+                const parts = line.split(",");
+                if (parts.length >= 11) {
+                    parsed.dates.push(parts[0]);
+                    parsed.opens.push(parseFloat(parts[1]));
+                    parsed.closes.push(parseFloat(parts[2]));
+                    parsed.highs.push(parseFloat(parts[3]));
+                    parsed.lows.push(parseFloat(parts[4]));
+                    parsed.volumes.push(parseFloat(parts[5]));
+                    parsed.amounts.push(parseFloat(parts[6]));
+                    parsed.changes.push(parts[10] !== "-" ? parseFloat(parts[10]) : 0);
+                    parsed.change_pcts.push(parts[9] !== "-" ? parseFloat(parts[9]) : 0);
+                }
+            }
+
+            return parsed;
+        }
+
+        // 解析实时数据并附加到 parsed 数据上
+        function attachRealtimeData(parsed, rtData) {
+            if (!rtData || !rtData.data) return;
+            const rd = rtData.data;
+            const decimal = rd.f59 || 2;
+            const divisor = decimal > 0 ? Math.pow(10, decimal) : 1;
+
+            let latest = rd.f43 || 0;
+            if (latest && divisor > 1) latest = latest / divisor;
+
+            let change = rd.f169 || 0;
+            if (change && divisor > 1) change = change / divisor;
+
+            let changePct = rd.f170 || 0;
+            if (changePct) changePct = changePct / 100;
+
+            const volume = rd.f47 || 0;
+            const amount = rd.f48 || 0;
+
+            parsed.realtime = {
+                price: latest,
+                change: change,
+                change_pct: changePct,
+                volume: volume,
+                amount: amount,
+            };
+        }
+
+        // ======== 获取所有指数数据（并行） ========
+        async function fetchAllIndices(beginDate, endDate, klt) {
+            const results = {};
+
+            const promises = INDEX_ORDER.map(async (secid) => {
+                try {
+                    const { data: klineData, actualSecid } = await fetchKlineWithFallback(secid, beginDate, endDate, klt);
+                    const parsed = parseKlineData(klineData, secid);
+
+                    if (parsed) {
+                        // 同时获取实时数据
+                        try {
+                            const rtData = await fetchRealtime(actualSecid);
+                            attachRealtimeData(parsed, rtData);
+                        } catch (e) {
+                            console.warn(`[WARN] Realtime for ${secid} failed:`, e.message);
+                        }
+                        results[secid] = parsed;
+                    }
+                } catch (e) {
+                    console.error(`[ERROR] ${secid}:`, e);
+                }
+            });
+
+            await Promise.all(promises);
+            return results;
+        }
+
+        // ======== 时间范围计算 ========
+        function getDateRange(preset) {
+            const now = new Date();
+            const end = formatDate(now);
+            let start;
+            switch (preset) {
+                case "1m":
+                    start = formatDate(new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()));
+                    break;
+                case "3m":
+                    start = formatDate(new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()));
+                    break;
+                case "6m":
+                    start = formatDate(new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()));
+                    break;
+                case "ytd":
+                    start = `${now.getFullYear()}0101`;
+                    break;
+                case "1y":
+                    start = formatDate(new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()));
+                    break;
+                case "3y":
+                    start = formatDate(new Date(now.getFullYear() - 3, now.getMonth(), now.getDate()));
+                    break;
+                case "5y":
+                    start = formatDate(new Date(now.getFullYear() - 5, now.getMonth(), now.getDate()));
+                    break;
+                default:
+                    start = `${now.getFullYear()}0101`;
+            }
+            return { begin: start, end: end.replace(/-/g, "") };
+        }
+
+        function formatDate(d) {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, "0");
+            const day = String(d.getDate()).padStart(2, "0");
+            return `${y}${m}${day}`;
+        }
+
+        function formatDateISO(d) {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, "0");
+            const day = String(d.getDate()).padStart(2, "0");
+            return `${y}-${m}-${day}`;
+        }
+
+        // ======== 初始化 ========
+        document.addEventListener("DOMContentLoaded", () => {
+            initDateInputs();
+            initCharts();
+            refreshData();
+        });
+
+        function initDateInputs() {
+            const now = new Date();
+            document.getElementById("dateTo").value = formatDateISO(now);
+            document.getElementById("dateFrom").value = `${now.getFullYear()}-01-01`;
+        }
+
+        function initCharts() {
+            mainChartInstance = echarts.init(document.getElementById("mainChart"));
+            compareChartInstance = echarts.init(document.getElementById("compareChart"));
+            window.addEventListener("resize", () => {
+                mainChartInstance && mainChartInstance.resize();
+                compareChartInstance && compareChartInstance.resize();
+            });
+        }
+
+        // ======== 工具栏交互 ========
+        function setPreset(preset, el) {
+            currentPreset = preset;
+            document.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
+            el.classList.add("active");
+
+            const range = getDateRange(preset);
+            const from = range.begin;
+            const to = range.end;
+            document.getElementById("dateFrom").value = `${from.slice(0,4)}-${from.slice(4,6)}-${from.slice(6,8)}`;
+            document.getElementById("dateTo").value = `${to.slice(0,4)}-${to.slice(4,6)}-${to.slice(6,8)}`;
+
+            refreshData();
+        }
+
+        function applyDateRange() {
+            document.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
+            currentPreset = "custom";
+            refreshData();
+        }
+
+        function setKlt(klt, el) {
+            currentKlt = klt;
+            document.querySelectorAll(".klt-btn").forEach(b => b.classList.remove("active"));
+            el.classList.add("active");
+            refreshData();
+        }
+
+        function toggleVolume() {
+            showVolume = !showVolume;
+            document.getElementById("volumeToggle").classList.toggle("active", showVolume);
+            renderMainChart();
+        }
+
+        // ======== 核心数据刷新 ========
+        async function refreshData() {
+            const btn = document.getElementById("btnRefresh");
+            btn.classList.add("loading");
+            showLoading(true);
+
+            try {
+                let begin, end;
+                if (currentPreset === "custom") {
+                    const fromVal = document.getElementById("dateFrom").value;
+                    const toVal = document.getElementById("dateTo").value;
+                    begin = fromVal.replace(/-/g, "");
+                    end = toVal.replace(/-/g, "");
+                } else {
+                    const range = getDateRange(currentPreset);
+                    begin = range.begin;
+                    end = range.end;
+                }
+
+                // 直接从前端并行请求东方财富API
+                allData = await fetchAllIndices(begin, end, currentKlt);
+
+                renderCards();
+                renderStats();
+                renderMainChart();
+                renderCompareChart();
+                updateTimeDisplay();
+            } catch (err) {
+                showError("数据获取失败: " + err.message + "，请刷新页面重试");
+                console.error(err);
+            } finally {
+                btn.classList.remove("loading");
+                showLoading(false);
+            }
+        }
+
+        // ======== 卡片渲染 ========
+        function renderCards() {
+            const container = document.getElementById("indexCards");
+            container.innerHTML = "";
+
+            INDEX_ORDER.forEach(secid => {
+                const data = allData[secid];
+                const meta = INDEX_META[secid];
+                if (!data) return;
+
+                const closes = data.closes || [];
+                const amounts = data.amounts || [];
+                const lastPrice = closes.length > 0 ? closes[closes.length - 1] : 0;
+                const prevPrice = closes.length > 1 ? closes[closes.length - 2] : lastPrice;
+                const firstPrice = closes.length > 0 ? closes[0] : lastPrice;
+
+                let displayPrice = lastPrice;
+                let dayChange = lastPrice - prevPrice;
+                let dayChangePct = prevPrice > 0 ? ((lastPrice - prevPrice) / prevPrice * 100) : 0;
+                let todayAmount = amounts.length > 0 ? amounts[amounts.length - 1] : 0;
+
+                if (data.realtime && data.realtime.price > 0) {
+                    displayPrice = data.realtime.price;
+                    dayChange = data.realtime.change || dayChange;
+                    dayChangePct = data.realtime.change_pct || dayChangePct;
+                    if (data.realtime.amount > 0) todayAmount = data.realtime.amount;
+                }
+
+                const ytdPct = firstPrice > 0 ? ((displayPrice - firstPrice) / firstPrice * 100) : 0;
+                const colorClass = dayChangePct > 0 ? "up" : dayChangePct < 0 ? "down" : "flat";
+                const isUp = dayChangePct >= 0;
+
+                const card = document.createElement("div");
+                card.className = `index-card ${secid === activeSecid ? "active" : ""}`;
+                card.onclick = () => selectIndex(secid);
+
+                card.innerHTML = `
+                    <div class="card-header">
+                        <span class="card-name">${meta.name}</span>
+                        <span class="card-code">${meta.short}</span>
+                    </div>
+                    <div class="card-price ${colorClass}">${fmtNum(displayPrice)}</div>
+                    <div class="card-change">
+                        <span class="${colorClass}">
+                            ${isUp ? "&#9650;" : dayChangePct < 0 ? "&#9660;" : "&#9644;"}
+                            ${fmtNum(Math.abs(dayChange))}
+                        </span>
+                        <span class="${colorClass}">
+                            ${isUp ? "+" : ""}${dayChangePct.toFixed(2)}%
+                        </span>
+                    </div>
+                    <div class="card-footer">
+                        <div class="ytd-badge ${ytdPct >= 0 ? "positive" : "negative"}">
+                            YTD ${ytdPct >= 0 ? "+" : ""}${ytdPct.toFixed(2)}%
+                        </div>
+                        <div class="card-volume">
+                            <span class="vol-icon"></span>
+                            ${fmtAmount(todayAmount)}
+                        </div>
+                    </div>
+                    <div class="card-sparkline" id="spark-${meta.short}"></div>
+                `;
+
+                container.appendChild(card);
+                setTimeout(() => renderSparkline(`spark-${meta.short}`, closes, meta.color), 50);
+            });
+        }
+
+        function renderSparkline(containerId, data, color) {
+            const el = document.getElementById(containerId);
+            if (!el || data.length === 0) return;
+            const chart = echarts.init(el);
+            chart.setOption({
+                grid: { top: 2, bottom: 2, left: 0, right: 0 },
+                xAxis: { show: false, type: "category", data: data.map((_, i) => i) },
+                yAxis: { show: false, type: "value", min: "dataMin", max: "dataMax" },
+                series: [{
+                    type: "line", data: data, showSymbol: false,
+                    lineStyle: { width: 1.5, color: color },
+                    areaStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: color + "40" },
+                            { offset: 1, color: color + "05" },
+                        ])
+                    },
+                }]
+            });
+            window.addEventListener("resize", () => chart.resize());
+        }
+
+        // ======== 统计栏 ========
+        function renderStats() {
+            const container = document.getElementById("statsRow");
+            const data = allData[activeSecid];
+            if (!data || !data.closes || data.closes.length === 0) { container.innerHTML = ""; return; }
+
+            const closes = data.closes, highs = data.highs, lows = data.lows, amounts = data.amounts || [];
+            const firstClose = closes[0], lastClose = closes[closes.length - 1];
+            const maxHigh = Math.max(...highs), minLow = Math.min(...lows);
+            const ytdReturn = ((lastClose - firstClose) / firstClose * 100);
+
+            let dailyReturns = [];
+            for (let i = 1; i < closes.length; i++) {
+                dailyReturns.push((closes[i] - closes[i-1]) / closes[i-1]);
+            }
+            const avgReturn = dailyReturns.length > 0 ? dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length : 0;
+            const variance = dailyReturns.length > 0 ? dailyReturns.reduce((a, b) => a + Math.pow(b - avgReturn, 2), 0) / dailyReturns.length : 0;
+            const volatility = Math.sqrt(variance) * Math.sqrt(252) * 100;
+
+            const totalAmount = amounts.reduce((a, b) => a + b, 0);
+            const avgAmount = amounts.length > 0 ? totalAmount / amounts.length : 0;
+
+            const ytdClass = ytdReturn >= 0 ? "up" : "down";
+
+            container.innerHTML = `
+                <div class="stat-item">
+                    <div class="stat-label">起始点位</div>
+                    <div class="stat-value">${fmtNum(firstClose)}</div>
+                    <div class="stat-sub" style="color:var(--text-muted)">${data.dates[0]}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">最新点位</div>
+                    <div class="stat-value">${fmtNum(lastClose)}</div>
+                    <div class="stat-sub" style="color:var(--text-muted)">${data.dates[data.dates.length - 1]}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">区间最高</div>
+                    <div class="stat-value" style="color:var(--red)">${fmtNum(maxHigh)}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">区间最低</div>
+                    <div class="stat-value" style="color:var(--green)">${fmtNum(minLow)}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">区间涨跌</div>
+                    <div class="stat-value ${ytdClass}">${ytdReturn >= 0 ? "+" : ""}${ytdReturn.toFixed(2)}%</div>
+                    <div class="stat-sub" style="color:var(--text-muted)">波动率 ${volatility.toFixed(1)}%</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">日均成交额</div>
+                    <div class="stat-value" style="color:var(--accent-cyan)">${fmtAmount(avgAmount)}</div>
+                    <div class="stat-sub" style="color:var(--text-muted)">累计 ${fmtAmount(totalAmount)}</div>
+                </div>
+            `;
+        }
+
+        // ======== 主图表(含成交额) ========
+        function renderMainChart() {
+            const data = allData[activeSecid];
+            const meta = INDEX_META[activeSecid];
+            if (!data) return;
+
+            const kltLabel = currentKlt === 103 ? "月线" : currentKlt === 102 ? "周线" : "日线";
+            document.getElementById("chartTitle").textContent = `${meta.name} - ${kltLabel}走势`;
+
+            if (chartType === "area") {
+                renderAreaChart(data, meta);
+            } else {
+                renderCandleChart(data, meta);
+            }
+        }
+
+        function buildVolumeBarData(data) {
+            return data.dates.map((_, i) => {
+                const isUp = data.closes[i] >= data.opens[i];
+                return {
+                    value: data.amounts[i] || 0,
+                    itemStyle: {
+                        color: isUp ? "rgba(239,68,68,0.5)" : "rgba(16,185,129,0.5)",
+                    }
+                };
+            });
+        }
+
+        function renderAreaChart(data, meta) {
+            const grids = showVolume ? [
+                { top: 40, bottom: "32%", left: 70, right: 40 },
+                { top: "74%", bottom: 50, left: 70, right: 40 },
+            ] : [
+                { top: 40, bottom: 60, left: 70, right: 40 },
+            ];
+
+            const xAxes = [{
+                type: "category", data: data.dates, gridIndex: 0,
+                axisLine: { lineStyle: { color: "#2a3654" } },
+                axisTick: { show: false },
+                axisLabel: { color: "#6b7280", fontSize: 11, show: !showVolume },
+                splitLine: { show: false },
+            }];
+
+            const yAxes = [{
+                type: "value", min: "dataMin", max: "dataMax", gridIndex: 0,
+                axisLine: { show: false }, axisTick: { show: false },
+                axisLabel: { color: "#6b7280", fontSize: 11 },
+                splitLine: { lineStyle: { color: "#1e293b", type: "dashed" } },
+            }];
+
+            const series = [{
+                name: meta.name, type: "line", data: data.closes,
+                xAxisIndex: 0, yAxisIndex: 0,
+                showSymbol: false, smooth: 0.3,
+                lineStyle: { width: 2, color: meta.color },
+                areaStyle: {
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: meta.color + "50" },
+                        { offset: 0.5, color: meta.color + "20" },
+                        { offset: 1, color: meta.color + "02" },
+                    ])
+                },
+                markLine: {
+                    silent: true, symbol: "none",
+                    data: [{ yAxis: data.closes[0], label: { formatter: `起始 ${fmtNum(data.closes[0])}`, color: "#f59e0b", fontSize: 11 }, lineStyle: { color: "#f59e0b", type: "dashed", width: 1 } }]
+                }
+            }];
+
+            const dataZooms = [{
+                type: "inside", xAxisIndex: showVolume ? [0, 1] : [0], start: 0, end: 100,
+            }, {
+                type: "slider", xAxisIndex: showVolume ? [0, 1] : [0],
+                start: 0, end: 100, height: 20, bottom: 6,
+                borderColor: "transparent",
+                backgroundColor: "rgba(255,255,255,0.03)",
+                fillerColor: "rgba(59,130,246,0.15)",
+                handleStyle: { color: "#3b82f6", borderColor: "#3b82f6" },
+                textStyle: { color: "#6b7280" },
+            }];
+
+            if (showVolume) {
+                xAxes.push({
+                    type: "category", data: data.dates, gridIndex: 1,
+                    axisLine: { lineStyle: { color: "#2a3654" } },
+                    axisTick: { show: false },
+                    axisLabel: { color: "#6b7280", fontSize: 11 },
+                    splitLine: { show: false },
+                });
+                yAxes.push({
+                    type: "value", gridIndex: 1,
+                    axisLine: { show: false }, axisTick: { show: false },
+                    axisLabel: { color: "#6b7280", fontSize: 10, formatter: v => fmtAmount(v) },
+                    splitLine: { lineStyle: { color: "#1e293b", type: "dashed" } },
+                    splitNumber: 3,
+                });
+                series.push({
+                    name: "成交额", type: "bar", data: buildVolumeBarData(data),
+                    xAxisIndex: 1, yAxisIndex: 1,
+                    barMaxWidth: 8,
+                });
+            }
+
+            const option = {
+                backgroundColor: "transparent",
+                tooltip: {
+                    trigger: "axis",
+                    axisPointer: { type: "cross", crossStyle: { color: "#6b7280" }, link: [{ xAxisIndex: "all" }] },
+                    backgroundColor: "rgba(15, 23, 42, 0.95)",
+                    borderColor: "rgba(59, 130, 246, 0.3)",
+                    textStyle: { color: "#e5e7eb", fontSize: 13 },
+                    formatter: function(params) {
+                        const idx = params[0].dataIndex;
+                        const close = data.closes[idx], open = data.opens[idx];
+                        const high = data.highs[idx], low = data.lows[idx];
+                        const chg = data.change_pcts[idx];
+                        const amt = data.amounts[idx] || 0;
+                        const chgColor = chg >= 0 ? "#ef4444" : "#10b981";
+                        return `
+                            <div style="font-weight:600;margin-bottom:6px">${params[0].axisValue}</div>
+                            <div>收盘: <b>${fmtNum(close)}</b> &nbsp; 开盘: ${fmtNum(open)}</div>
+                            <div>最高: <span style="color:#ef4444">${fmtNum(high)}</span> &nbsp; 最低: <span style="color:#10b981">${fmtNum(low)}</span></div>
+                            <div style="color:${chgColor};font-weight:600;margin-top:4px">涨跌幅: ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</div>
+                            <div style="color:#06b6d4;margin-top:2px">成交额: ${fmtAmount(amt)}</div>
+                        `;
+                    }
+                },
+                axisPointer: { link: [{ xAxisIndex: "all" }] },
+                grid: grids, xAxis: xAxes, yAxis: yAxes,
+                dataZoom: dataZooms, series: series,
+            };
+
+            mainChartInstance.setOption(option, true);
+        }
+
+        function renderCandleChart(data, meta) {
+            const candleData = data.dates.map((_, i) => [data.opens[i], data.closes[i], data.lows[i], data.highs[i]]);
+
+            const grids = showVolume ? [
+                { top: 40, bottom: "32%", left: 70, right: 40 },
+                { top: "74%", bottom: 50, left: 70, right: 40 },
+            ] : [
+                { top: 40, bottom: 60, left: 70, right: 40 },
+            ];
+
+            const xAxes = [{
+                type: "category", data: data.dates, gridIndex: 0,
+                axisLine: { lineStyle: { color: "#2a3654" } },
+                axisTick: { show: false },
+                axisLabel: { color: "#6b7280", fontSize: 11, show: !showVolume },
+                splitLine: { show: false },
+            }];
+
+            const yAxes = [{
+                type: "value", min: "dataMin", max: "dataMax", gridIndex: 0,
+                axisLine: { show: false }, axisTick: { show: false },
+                axisLabel: { color: "#6b7280", fontSize: 11 },
+                splitLine: { lineStyle: { color: "#1e293b", type: "dashed" } },
+            }];
+
+            const series = [{
+                name: meta.name, type: "candlestick", data: candleData,
+                xAxisIndex: 0, yAxisIndex: 0,
+                itemStyle: { color: "#ef4444", color0: "#10b981", borderColor: "#ef4444", borderColor0: "#10b981" },
+                markLine: {
+                    silent: true, symbol: "none",
+                    data: [{ yAxis: data.closes[0], label: { formatter: `起始 ${fmtNum(data.closes[0])}`, color: "#f59e0b", fontSize: 11 }, lineStyle: { color: "#f59e0b", type: "dashed", width: 1 } }]
+                }
+            }];
+
+            const dataZooms = [{
+                type: "inside", xAxisIndex: showVolume ? [0, 1] : [0], start: 0, end: 100,
+            }, {
+                type: "slider", xAxisIndex: showVolume ? [0, 1] : [0],
+                start: 0, end: 100, height: 20, bottom: 6,
+                borderColor: "transparent", backgroundColor: "rgba(255,255,255,0.03)",
+                fillerColor: "rgba(59,130,246,0.15)",
+                handleStyle: { color: "#3b82f6", borderColor: "#3b82f6" },
+                textStyle: { color: "#6b7280" },
+            }];
+
+            if (showVolume) {
+                xAxes.push({
+                    type: "category", data: data.dates, gridIndex: 1,
+                    axisLine: { lineStyle: { color: "#2a3654" } },
+                    axisTick: { show: false },
+                    axisLabel: { color: "#6b7280", fontSize: 11 },
+                    splitLine: { show: false },
+                });
+                yAxes.push({
+                    type: "value", gridIndex: 1,
+                    axisLine: { show: false }, axisTick: { show: false },
+                    axisLabel: { color: "#6b7280", fontSize: 10, formatter: v => fmtAmount(v) },
+                    splitLine: { lineStyle: { color: "#1e293b", type: "dashed" } },
+                    splitNumber: 3,
+                });
+                series.push({
+                    name: "成交额", type: "bar", data: buildVolumeBarData(data),
+                    xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 8,
+                });
+            }
+
+            const option = {
+                backgroundColor: "transparent",
+                tooltip: {
+                    trigger: "axis",
+                    axisPointer: { type: "cross", crossStyle: { color: "#6b7280" }, link: [{ xAxisIndex: "all" }] },
+                    backgroundColor: "rgba(15, 23, 42, 0.95)",
+                    borderColor: "rgba(59, 130, 246, 0.3)",
+                    textStyle: { color: "#e5e7eb", fontSize: 13 },
+                    formatter: function(params) {
+                        const idx = params[0].dataIndex;
+                        const chg = data.change_pcts[idx];
+                        const amt = data.amounts[idx] || 0;
+                        const chgColor = chg >= 0 ? "#ef4444" : "#10b981";
+                        return `
+                            <div style="font-weight:600;margin-bottom:6px">${data.dates[idx]}</div>
+                            <div>开盘: ${fmtNum(data.opens[idx])} &nbsp; 收盘: <b>${fmtNum(data.closes[idx])}</b></div>
+                            <div>最高: <span style="color:#ef4444">${fmtNum(data.highs[idx])}</span> &nbsp; 最低: <span style="color:#10b981">${fmtNum(data.lows[idx])}</span></div>
+                            <div style="color:${chgColor};font-weight:600;margin-top:4px">涨跌幅: ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</div>
+                            <div style="color:#06b6d4;margin-top:2px">成交额: ${fmtAmount(amt)}</div>
+                        `;
+                    }
+                },
+                axisPointer: { link: [{ xAxisIndex: "all" }] },
+                grid: grids, xAxis: xAxes, yAxis: yAxes,
+                dataZoom: dataZooms, series: series,
+            };
+
+            mainChartInstance.setOption(option, true);
+        }
+
+        // ======== 对比图表 ========
+        function renderCompareChart() {
+            const series = [];
+            const legendData = [];
+
+            // 1. 收集所有指数的日期，合并去重并排序，作为统一的X轴
+            const allDatesSet = new Set();
+            INDEX_ORDER.forEach(secid => {
+                const data = allData[secid];
+                if (data && data.dates) data.dates.forEach(d => allDatesSet.add(d));
+            });
+            const mergedDates = Array.from(allDatesSet).sort();
+
+            // 2. 每个指数按日期对齐到统一X轴，缺失交易日填 null
+            INDEX_ORDER.forEach(secid => {
+                const data = allData[secid];
+                const meta = INDEX_META[secid];
+                if (!data || !data.closes || data.closes.length === 0) return;
+
+                // 构建日期->收盘价的映射
+                const dateMap = {};
+                data.dates.forEach((d, i) => { dateMap[d] = data.closes[i]; });
+
+                const base = data.closes[0];
+                const aligned = mergedDates.map(d => {
+                    if (dateMap[d] !== undefined) {
+                        return +((dateMap[d] - base) / base * 100).toFixed(4);
+                    }
+                    return null; // 该市场当天休市，不画点
+                });
+
+                legendData.push(meta.name);
+                series.push({
+                    name: meta.name, type: "line", data: aligned,
+                    showSymbol: false, smooth: 0.2,
+                    connectNulls: true,  // 跳过休市日，连接前后有效数据点
+                    itemStyle: { color: meta.color },
+                    lineStyle: { width: 2, color: meta.color },
+                    emphasis: { lineStyle: { width: 3 } },
+                });
+            });
+
+            const longestDates = mergedDates;
+
+            const presetLabels = { "1m": "近1个月", "3m": "近3个月", "6m": "近6个月", "ytd": "今年以来", "1y": "近1年", "3y": "近3年", "5y": "近5年", "custom": "自定义区间" };
+            document.getElementById("compareTitle").textContent = `${presetLabels[currentPreset] || "今年以来"}涨跌幅对比（归一化）`;
+
+            const option = {
+                backgroundColor: "transparent",
+                tooltip: {
+                    trigger: "axis",
+                    backgroundColor: "rgba(15, 23, 42, 0.95)",
+                    borderColor: "rgba(59, 130, 246, 0.3)",
+                    textStyle: { color: "#e5e7eb", fontSize: 13 },
+                    formatter: function(params) {
+                        let html = `<div style="font-weight:600;margin-bottom:6px">${params[0].axisValue}</div>`;
+                        params.sort((a, b) => (b.value || 0) - (a.value || 0));
+                        params.forEach(p => {
+                            if (p.value == null) return;
+                            const color = p.value >= 0 ? "#ef4444" : "#10b981";
+                            html += `<div style="display:flex;justify-content:space-between;gap:16px">
+                                <span>${p.marker} ${p.seriesName}</span>
+                                <span style="color:${color};font-weight:600">${p.value >= 0 ? "+" : ""}${p.value.toFixed(2)}%</span>
+                            </div>`;
+                        });
+                        return html;
+                    }
+                },
+                legend: {
+                    data: legendData, top: 0,
+                    textStyle: { color: "#9ca3af", fontSize: 12 },
+                    icon: "roundRect", itemWidth: 16, itemHeight: 3,
+                },
+                grid: { top: 40, bottom: 50, left: 60, right: 40 },
+                xAxis: {
+                    type: "category", data: longestDates,
+                    axisLine: { lineStyle: { color: "#2a3654" } },
+                    axisTick: { show: false },
+                    axisLabel: { color: "#6b7280", fontSize: 11 },
+                    splitLine: { show: false },
+                },
+                yAxis: {
+                    type: "value",
+                    axisLine: { show: false }, axisTick: { show: false },
+                    axisLabel: { color: "#6b7280", fontSize: 11, formatter: "{value}%" },
+                    splitLine: { lineStyle: { color: "#1e293b", type: "dashed" } },
+                },
+                dataZoom: [{ type: "inside", start: 0, end: 100 }],
+                series: series,
+            };
+
+            compareChartInstance.setOption(option, true);
+        }
+
+        // ======== 交互 ========
+        function selectIndex(secid) {
+            activeSecid = secid;
+            document.querySelectorAll(".index-card").forEach((card, i) => {
+                card.classList.toggle("active", INDEX_ORDER[i] === secid);
+            });
+            renderStats();
+            renderMainChart();
+        }
+
+        function switchChartType(type, el) {
+            chartType = type;
+            document.querySelectorAll(".chart-tab").forEach(t => t.classList.remove("active"));
+            el.classList.add("active");
+            renderMainChart();
+        }
+
+        // ======== 工具函数 ========
+        function fmtNum(num) {
+            if (num === undefined || num === null || isNaN(num)) return "--";
+            return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function fmtAmount(amount) {
+            if (!amount || amount === 0) return "--";
+            if (amount >= 1e12) return (amount / 1e12).toFixed(2) + "万亿";
+            if (amount >= 1e8) return (amount / 1e8).toFixed(2) + "亿";
+            if (amount >= 1e4) return (amount / 1e4).toFixed(1) + "万";
+            return amount.toFixed(0);
+        }
+
+        function updateTimeDisplay() {
+            const now = new Date();
+            const str = now.toLocaleString("zh-CN", {
+                year: "numeric", month: "2-digit", day: "2-digit",
+                hour: "2-digit", minute: "2-digit", second: "2-digit"
+            });
+            document.getElementById("updateTime").textContent = `最后更新: ${str}`;
+        }
+
+        function showLoading(show) {
+            document.getElementById("loadingOverlay").classList.toggle("hidden", !show);
+        }
+
+        function showError(msg) {
+            const toast = document.getElementById("errorToast");
+            toast.textContent = msg;
+            toast.classList.add("show");
+            setTimeout(() => toast.classList.remove("show"), 5000);
+        }
+    </script>
+</body>
+</html>
