@@ -1245,9 +1245,10 @@
             const kltLabel = currentKlt === 103 ? "月线" : currentKlt === 102 ? "周线" : "日线";
             document.getElementById("chartTitle").textContent = `${meta.name} - ${kltLabel}走势`;
 
+            const chartEl = document.getElementById("mainChart");
+
             // 如果没有K线数据（新浪数据源），显示提示
             if (data.noKlineData || data.dates.length === 0) {
-                const chartEl = document.getElementById("mainChart");
                 if (mainChartInstance) {
                     mainChartInstance.dispose();
                     mainChartInstance = null;
@@ -1263,10 +1264,10 @@
                 return;
             }
 
-            // 确保 echarts 实例存在
-            const chartEl = document.getElementById("mainChart");
-            if (chartEl.querySelector("div")) {
+            // 确保 echarts 实例存在（可能从无K线指数切换回来后 instance 被 dispose 了）
+            if (!mainChartInstance) {
                 chartEl.innerHTML = ""; // 清除之前的提示文本
+                mainChartInstance = echarts.init(chartEl);
             }
 
             if (chartType === "area") {
