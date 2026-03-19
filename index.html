@@ -202,7 +202,7 @@
         /* ===== 指数卡片网格 ===== */
         .index-cards {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(3, 1fr);
             gap: 14px; margin-bottom: 20px;
         }
 
@@ -365,7 +365,6 @@
 
         /* ===== 响应式 ===== */
         @media (max-width: 1200px) {
-            .index-cards { grid-template-columns: repeat(3, 1fr); }
             .stats-row { grid-template-columns: repeat(3, 1fr); }
         }
         @media (max-width: 900px) {
@@ -387,7 +386,7 @@
     <div class="loading-overlay" id="loadingOverlay">
         <div class="loading-ring"></div>
         <div class="loading-text">正在获取最新行情数据...</div>
-        <div class="loading-sub">连接东方财富数据源</div>
+        <div class="loading-sub">连接腾讯财经数据源</div>
     </div>
 
     <!-- 错误提示 -->
@@ -484,18 +483,18 @@
 
     <!-- 底部来源标识 -->
     <footer class="footer">
-        数据来源：东方财富 &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v1.0
+        数据来源：腾讯财经 &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v2.0
     </footer>
 
     <script>
         // ============================================================
-        //  全球指数智能看板 - 纯前端版本（Cloud Edition）
-        //  所有数据直接从浏览器请求东方财富API，无需后端服务
+        //  全球指数智能看板 - 腾讯财经数据源版本（Cloud Edition v2）
+        //  所有数据直接从浏览器请求腾讯财经API，无需后端服务
         // ============================================================
 
         // ======== 全局状态 ========
         let allData = {};
-        let activeSecid = "1.000001";
+        let activeSecid = "sh000001";
         let chartType = "area";
         let showVolume = true;
         let currentKlt = 101;
@@ -503,223 +502,225 @@
         let mainChartInstance = null;
         let compareChartInstance = null;
 
+        // 腾讯财经指数代码映射
         const INDEX_META = {
-            "1.000001":   { name: "上证指数",     short: "SSE",    color: "#3b82f6" },
-            "100.HSI":    { name: "恒生指数",     short: "HSI",    color: "#ea580c" },
-            "124.HSTECH": { name: "恒生科技指数", short: "HSTECH", color: "#fb923c" },
-            "100.NDX":    { name: "纳斯达克100",  short: "NDX",    color: "#16a34a" },
-            "100.SPX":    { name: "标普500",       short: "SPX",    color: "#4ade80" },
-            "100.N225":   { name: "日经225",       short: "N225",   color: "#f472b6" },
-            "100.KS11":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8" },
+            "sh000001":  { name: "上证指数",     short: "SSE",    color: "#3b82f6", qqCode: "sh000001",  klineCode: "sh000001" },
+            "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqCode: "hkHSI",     klineCode: "hkHSI" },
+            "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqCode: "hkHSTECH",  klineCode: "hkHSTECH" },
+            "us.IXIC":   { name: "纳斯达克综合",  short: "IXIC",   color: "#16a34a", qqCode: "us.IXIC",   klineCode: "us.IXIC" },
+            "us.INX":    { name: "标普500",       short: "SPX",    color: "#4ade80", qqCode: "us.INX",    klineCode: "us.INX" },
+            "us.DJI":    { name: "道琼斯工业",   short: "DJI",    color: "#f472b6", qqCode: "us.DJI",    klineCode: "us.DJI" },
         };
 
-        const INDEX_ORDER = ["1.000001", "100.HSI", "124.HSTECH", "100.NDX", "100.SPX", "100.N225", "100.KS11"];
+        const INDEX_ORDER = ["sh000001", "hkHSI", "hkHSTECH", "us.IXIC", "us.INX", "us.DJI"];
 
-        // 备用 secid 映射（如果主 secid 不工作）
-        const FALLBACK_SECIDS = {
-            "100.NDX": ["105.NDX", "106.NDX"],
-            "100.SPX": ["105.SPX", "106.SPX"],
-            "100.HSI": ["116.HSI"],
-            "124.HSTECH": ["116.HSTECH", "100.HSTECH"],
-            "100.N225": ["119.N225"],
-            "100.KS11": ["119.KS11"],
-        };
-
-        // ======== JSONP 请求工具 ========
+        // JSONP 全局计数器
         let jsonpCounter = 0;
 
-        function jsonpFetch(url, params) {
+        // ======== 腾讯实时行情（script 标签方式 — 设置全局变量） ========
+        function fetchQQRealtime(codes) {
             return new Promise((resolve, reject) => {
-                const callbackName = `__jsonp_cb_${Date.now()}_${jsonpCounter++}`;
-                params.cb = callbackName;
+                const codeList = codes.join(",");
+                const script = document.createElement("script");
+                script.src = `https://qt.gtimg.cn/q=${codeList}&t=${Date.now()}`;
 
-                const queryString = Object.entries(params)
-                    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-                    .join("&");
-                const fullUrl = `${url}?${queryString}`;
-
-                // 设置超时
                 const timeout = setTimeout(() => {
                     cleanup();
-                    reject(new Error("JSONP timeout"));
-                }, 12000);
+                    reject(new Error("Realtime timeout"));
+                }, 15000);
 
                 function cleanup() {
                     clearTimeout(timeout);
-                    delete window[callbackName];
                     if (script.parentNode) script.parentNode.removeChild(script);
                 }
 
-                window[callbackName] = function(data) {
+                script.onload = function () {
                     cleanup();
-                    resolve(data);
+                    // 腾讯接口会在 document 中插入变量赋值: v_sh000001="1~上证指数~000001~..."
+                    // 但由于是 script 标签加载，变量会被赋值到 window 上
+                    // 不过格式是 v_xxx = "..." 这种赋值语句
+                    // 我们需要从文本中解析（但 script onload 时已经执行了）
+                    // 实际上腾讯的 response 是: v_sh000001="..."; 形式的 JS 赋值语句
+                    // 加载后会自动设置 window.v_sh000001 等变量
+                    const results = {};
+                    codes.forEach(code => {
+                        // 腾讯变量名: v_ + code（但 . 会被替换成其他字符）
+                        // 对于 sh000001 -> v_sh000001
+                        // 对于 hkHSI -> v_hkHSI
+                        // 对于 us.IXIC -> v_us_IXIC（点号变下划线）
+                        const varName = "v_" + code.replace(/\./g, "_");
+                        if (typeof window[varName] === "string" && window[varName] !== "") {
+                            results[code] = window[varName];
+                        }
+                    });
+                    resolve(results);
                 };
 
-                const script = document.createElement("script");
-                script.src = fullUrl;
-                script.onerror = function() {
+                script.onerror = function () {
                     cleanup();
-                    reject(new Error("JSONP script error"));
+                    reject(new Error("Realtime script error"));
                 };
+
                 document.head.appendChild(script);
             });
         }
 
-        // 普通 fetch（带 fallback 到 JSONP）
-        async function apiFetch(url, params) {
-            // 先尝试直接 fetch（支持 CORS 的接口）
+        // 解析腾讯实时行情字符串
+        function parseRealtimeStr(str) {
+            if (!str || str === "") return null;
+            const parts = str.split("~");
+            if (parts.length < 38) return null;
+            return {
+                name: parts[1],
+                code: parts[2],
+                price: parseFloat(parts[3]) || 0,
+                prevClose: parseFloat(parts[4]) || 0,
+                open: parseFloat(parts[5]) || 0,
+                volume: parseFloat(parts[6]) || 0,    // 成交量(手)
+                change: parseFloat(parts[31]) || 0,
+                changePct: parseFloat(parts[32]) || 0,
+                high: parseFloat(parts[33]) || 0,
+                low: parseFloat(parts[34]) || 0,
+                amount: parseFloat(parts[37]) || 0,    // 成交额(万)
+            };
+        }
+
+        // ======== 腾讯K线历史数据 ========
+        async function fetchQQKline(klineCode, kltType, startDate, endDate, count) {
+            // kltType: "day", "week", "month"
+            const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${klineCode},${kltType},${startDate},${endDate},${count},qfq`;
+
             try {
-                const queryString = Object.entries(params)
-                    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-                    .join("&");
-                const resp = await fetch(`${url}?${queryString}`, {
-                    headers: { "Referer": "https://quote.eastmoney.com/" }
-                });
+                const resp = await fetch(url);
                 if (resp.ok) {
                     return await resp.json();
                 }
             } catch (e) {
-                // fetch 失败（CORS等原因），降级到 JSONP
+                console.warn(`[WARN] Fetch failed for ${klineCode}:`, e.message);
+            }
+            return null;
+        }
+
+        // 解析腾讯K线数据
+        function parseQQKlineData(rawData, secid) {
+            if (!rawData || rawData.code !== 0 || !rawData.data) return null;
+
+            const meta = INDEX_META[secid];
+            const klineCode = meta.klineCode;
+
+            // 腾讯返回的 data 中，key 是代码名
+            const stockData = rawData.data[klineCode];
+            if (!stockData) {
+                // 尝试遍历 data 的 keys
+                const keys = Object.keys(rawData.data);
+                if (keys.length === 0) return null;
+                var stockDataAlt = rawData.data[keys[0]];
+                if (!stockDataAlt) return null;
+                return parseQQKlineInner(stockDataAlt, secid, meta);
             }
 
-            // JSONP 方式
-            return await jsonpFetch(url, params);
+            return parseQQKlineInner(stockData, secid, meta);
         }
 
-        // ======== 东方财富 API 调用 ========
-        async function fetchKline(secid, beginDate, endDate, klt) {
-            const params = {
-                secid: secid,
-                fields1: "f1,f2,f3,f4,f5,f6",
-                fields2: "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-                klt: String(klt),
-                fqt: "1",
-                beg: beginDate,
-                end: endDate,
-                ut: "fa5fd1943c7b386f172d6893dbbd4dc0",
-            };
-            return await apiFetch("https://push2his.eastmoney.com/api/qt/stock/kline/get", params);
-        }
-
-        async function fetchRealtime(secid) {
-            const params = {
-                secid: secid,
-                fields: "f43,f44,f45,f46,f47,f48,f50,f57,f58,f59,f60,f169,f170,f171",
-                ut: "fa5fd1943c7b386f172d6893dbbd4dc0",
-            };
-            return await apiFetch("https://push2.eastmoney.com/api/qt/stock/get", params);
-        }
-
-        // 带 fallback 的 K线获取
-        async function fetchKlineWithFallback(secid, beginDate, endDate, klt) {
-            // 先尝试主 secid
-            try {
-                const data = await fetchKline(secid, beginDate, endDate, klt);
-                if (data && data.data && data.data.klines && data.data.klines.length > 0) {
-                    return { data, actualSecid: secid };
-                }
-            } catch (e) {
-                console.warn(`[WARN] Primary ${secid} failed:`, e.message);
-            }
-
-            // 尝试备用 secid
-            const fallbacks = FALLBACK_SECIDS[secid] || [];
-            for (const fb of fallbacks) {
-                try {
-                    console.log(`[INFO] Trying fallback ${fb} for ${secid}`);
-                    const data = await fetchKline(fb, beginDate, endDate, klt);
-                    if (data && data.data && data.data.klines && data.data.klines.length > 0) {
-                        return { data, actualSecid: fb };
-                    }
-                } catch (e) {
-                    console.warn(`[WARN] Fallback ${fb} failed:`, e.message);
+        function parseQQKlineInner(stockData, secid, meta) {
+            // 腾讯K线数据在 day/week/month 或 qfqday/qfqweek/qfqmonth 字段中
+            const klineKeys = ["qfqday", "day", "qfqweek", "week", "qfqmonth", "month"];
+            let klines = null;
+            for (const key of klineKeys) {
+                if (stockData[key] && stockData[key].length > 0) {
+                    klines = stockData[key];
+                    break;
                 }
             }
-
-            return { data: null, actualSecid: secid };
-        }
-
-        // 解析 K线数据
-        function parseKlineData(rawData, secid) {
-            if (!rawData || !rawData.data) return null;
-
-            const data = rawData.data;
-            const klines = data.klines || [];
-            const meta = INDEX_META[secid] || { name: secid, short: secid };
+            if (!klines || klines.length === 0) return null;
 
             const parsed = {
-                name: data.name || meta.name,
-                code: data.code || "",
+                name: meta.name,
+                code: meta.short,
                 secid: secid,
                 short: meta.short,
                 dates: [], opens: [], closes: [], highs: [], lows: [],
                 volumes: [], amounts: [], changes: [], change_pcts: [],
             };
 
+            let prevClose = 0;
             for (const line of klines) {
-                const parts = line.split(",");
-                if (parts.length >= 11) {
-                    parsed.dates.push(parts[0]);
-                    parsed.opens.push(parseFloat(parts[1]));
-                    parsed.closes.push(parseFloat(parts[2]));
-                    parsed.highs.push(parseFloat(parts[3]));
-                    parsed.lows.push(parseFloat(parts[4]));
-                    parsed.volumes.push(parseFloat(parts[5]));
-                    parsed.amounts.push(parseFloat(parts[6]));
-                    parsed.changes.push(parts[10] !== "-" ? parseFloat(parts[10]) : 0);
-                    parsed.change_pcts.push(parts[9] !== "-" ? parseFloat(parts[9]) : 0);
+                // 格式: [日期, 开盘, 收盘, 最高, 最低, 成交量]
+                if (!line || line.length < 5) continue;
+                const date = line[0];
+                const open = parseFloat(line[1]) || 0;
+                const close = parseFloat(line[2]) || 0;
+                const high = parseFloat(line[3]) || 0;
+                const low = parseFloat(line[4]) || 0;
+                const volume = line.length > 5 ? parseFloat(line[5]) || 0 : 0;
+
+                // 计算涨跌
+                const change = prevClose > 0 ? close - prevClose : 0;
+                const changePct = prevClose > 0 ? (change / prevClose * 100) : 0;
+
+                parsed.dates.push(date);
+                parsed.opens.push(open);
+                parsed.closes.push(close);
+                parsed.highs.push(high);
+                parsed.lows.push(low);
+                parsed.volumes.push(volume);
+                parsed.amounts.push(volume); // 腾讯接口成交量字段
+                parsed.changes.push(change);
+                parsed.change_pcts.push(changePct);
+
+                prevClose = close;
+            }
+
+            // 从 K 线 API 的 qt 字段提取实时行情
+            if (stockData.qt) {
+                const klineCode = meta.klineCode;
+                const qtData = stockData.qt[klineCode];
+                if (qtData && Array.isArray(qtData) && qtData.length > 35) {
+                    const price = parseFloat(qtData[3]) || 0;
+                    const prevCloseRt = parseFloat(qtData[4]) || 0;
+                    const changeVal = parseFloat(qtData[31]) || 0;
+                    let changePctVal = qtData[32] || "0";
+                    changePctVal = parseFloat(String(changePctVal).replace("%", "")) || 0;
+                    const amount = parseFloat(qtData[37]) || 0;
+
+                    if (price > 0) {
+                        parsed.realtime = {
+                            price: price,
+                            change: changeVal,
+                            change_pct: changePctVal,
+                            volume: 0,
+                            amount: amount * 10000, // 万 -> 元
+                        };
+                    }
                 }
             }
 
             return parsed;
         }
 
-        // 解析实时数据并附加到 parsed 数据上
-        function attachRealtimeData(parsed, rtData) {
-            if (!rtData || !rtData.data) return;
-            const rd = rtData.data;
-            const decimal = rd.f59 || 2;
-            const divisor = decimal > 0 ? Math.pow(10, decimal) : 1;
-
-            let latest = rd.f43 || 0;
-            if (latest && divisor > 1) latest = latest / divisor;
-
-            let change = rd.f169 || 0;
-            if (change && divisor > 1) change = change / divisor;
-
-            let changePct = rd.f170 || 0;
-            if (changePct) changePct = changePct / 100;
-
-            const volume = rd.f47 || 0;
-            const amount = rd.f48 || 0;
-
-            parsed.realtime = {
-                price: latest,
-                change: change,
-                change_pct: changePct,
-                volume: volume,
-                amount: amount,
-            };
-        }
-
         // ======== 获取所有指数数据（并行） ========
         async function fetchAllIndices(beginDate, endDate, klt) {
             const results = {};
 
+            // 将 klt 转为腾讯格式
+            const kltMap = { 101: "day", 102: "week", 103: "month" };
+            const kltType = kltMap[klt] || "day";
+
+            // 格式化日期: 20260101 -> 2026-01-01
+            const fmtBegin = `${beginDate.slice(0,4)}-${beginDate.slice(4,6)}-${beginDate.slice(6,8)}`;
+            const fmtEnd = `${endDate.slice(0,4)}-${endDate.slice(4,6)}-${endDate.slice(6,8)}`;
+
+            // 并行获取所有指数的K线数据（K线 API 同时返回实时行情）
             const promises = INDEX_ORDER.map(async (secid) => {
                 try {
-                    const { data: klineData, actualSecid } = await fetchKlineWithFallback(secid, beginDate, endDate, klt);
-                    const parsed = parseKlineData(klineData, secid);
+                    const meta = INDEX_META[secid];
+                    const rawData = await fetchQQKline(meta.klineCode, kltType, fmtBegin, fmtEnd, 800);
+                    const parsed = parseQQKlineData(rawData, secid);
 
                     if (parsed) {
-                        // 同时获取实时数据
-                        try {
-                            const rtData = await fetchRealtime(actualSecid);
-                            attachRealtimeData(parsed, rtData);
-                        } catch (e) {
-                            console.warn(`[WARN] Realtime for ${secid} failed:`, e.message);
-                        }
                         results[secid] = parsed;
+                    } else {
+                        console.warn(`[WARN] No kline data for ${secid}`);
                     }
                 } catch (e) {
                     console.error(`[ERROR] ${secid}:`, e);
@@ -727,6 +728,35 @@
             });
 
             await Promise.all(promises);
+
+            // 如果某些指数没有从K线API获取到实时数据，尝试通过 qt.gtimg.cn 补充
+            const needsRealtime = INDEX_ORDER.filter(secid => results[secid] && !results[secid].realtime);
+            if (needsRealtime.length > 0) {
+                try {
+                    const rtCodes = needsRealtime.map(s => INDEX_META[s].qqCode);
+                    const rtResults = await fetchQQRealtime(rtCodes);
+
+                    needsRealtime.forEach(secid => {
+                        const meta = INDEX_META[secid];
+                        const rtStr = rtResults[meta.qqCode];
+                        if (rtStr && results[secid]) {
+                            const rt = parseRealtimeStr(rtStr);
+                            if (rt && rt.price > 0) {
+                                results[secid].realtime = {
+                                    price: rt.price,
+                                    change: rt.change,
+                                    change_pct: rt.changePct,
+                                    volume: rt.volume,
+                                    amount: rt.amount * 10000,
+                                };
+                            }
+                        }
+                    });
+                } catch (e) {
+                    console.warn("[WARN] Supplemental realtime fetch failed:", e.message);
+                }
+            }
+
             return results;
         }
 
