@@ -507,16 +507,16 @@
         // 指数代码映射（混合数据源：腾讯K线 + 新浪实时行情）
         const INDEX_META = {
             "sh000001":  { name: "上证指数",     short: "SSE",    color: "#3b82f6", qqCode: "sh000001",  klineCode: "sh000001", source: "qq" },
+            "sz399006":  { name: "创业板指",     short: "CYB",    color: "#a855f7", qqCode: "sz399006",  klineCode: "sz399006", source: "qq" },
             "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqCode: "hkHSI",     klineCode: "hkHSI",    source: "qq" },
             "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqCode: "hkHSTECH",  klineCode: "hkHSTECH", source: "qq" },
             "b_NKY":     { name: "日经225",      short: "N225",   color: "#f472b6", sinaCode: "b_NKY",   emSecid: "100.N225",   source: "sina" },
             "b_KOSPI":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", sinaCode: "b_KOSPI", emSecid: "100.KS11",   source: "sina" },
             "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#16a34a", qqCode: "us.IXIC",   klineCode: "us.IXIC",  source: "qq" },
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#4ade80", qqCode: "us.INX",    klineCode: "us.INX",   source: "qq" },
-            "us.DJI":    { name: "道琼斯工业",   short: "DJI",    color: "#f97316", qqCode: "us.DJI",    klineCode: "us.DJI",   source: "qq" },
         };
 
-        const INDEX_ORDER = ["sh000001", "hkHSI", "hkHSTECH", "b_NKY", "b_KOSPI", "us.IXIC", "us.INX", "us.DJI"];
+        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "b_NKY", "b_KOSPI", "us.IXIC", "us.INX"];
 
         // JSONP 全局计数器
         let jsonpCounter = 0;
