@@ -510,8 +510,8 @@
             "sz399006":  { name: "创业板指",     short: "CYB",    color: "#a855f7", qqCode: "sz399006",  klineCode: "sz399006", source: "qq" },
             "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqCode: "hkHSI",     klineCode: "hkHSI",    source: "qq" },
             "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqCode: "hkHSTECH",  klineCode: "hkHSTECH", source: "qq" },
-            "b_NKY":     { name: "日经225",      short: "N225",   color: "#f472b6", sinaCode: "b_NKY",   emSecid: "100.N225",   source: "sina" },
-            "b_KOSPI":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", sinaCode: "b_KOSPI", emSecid: "100.KS11",   source: "sina" },
+            "b_NKY":     { name: "日经225",      short: "N225",   color: "#f472b6", emSecid: "100.N225",   source: "em" },
+            "b_KOSPI":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", emSecid: "100.KS11",   source: "em" },
             "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#16a34a", qqCode: "us.IXIC",   klineCode: "us.IXIC",  source: "qq" },
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#4ade80", qqCode: "us.INX",    klineCode: "us.INX",   source: "qq" },
         };
@@ -590,61 +590,56 @@
         }
 
         // ======== 新浪实时行情（JSONP 方式 — 设置全局变量） ========
-        function fetchSinaRealtime(codes) {
-            return new Promise((resolve, reject) => {
-                const codeList = codes.join(",");
-                const script = document.createElement("script");
-                script.src = `https://hq.sinajs.cn/list=${codeList}`;
-                script.charset = "gb2312"; // 新浪接口使用 GBK 编码
+        // ======== 东方财富 JSONP 实时行情（用于日韩等海外指数） ========
+        // 每个 secid 单独请求，返回 { emSecid: {price, change, changePct, volume, amount} }
+        function fetchEMRealtime(emSecids) {
+            // emSecids: ["100.N225", "100.KS11"]
+            const promises = emSecids.map(emSecid => {
+                return new Promise((resolve) => {
+                    const cbName = `__emrt_${Date.now()}_${jsonpCounter++}`;
+                    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${emSecid}&fields=f43,f44,f45,f46,f47,f48,f57,f58,f60,f169,f170&ut=fa5fd1943c7b386f172d6893dbfba10b&fltt=2&invt=2&cb=${cbName}`;
 
-                const timeout = setTimeout(() => {
-                    cleanup();
-                    reject(new Error("Sina realtime timeout"));
-                }, 15000);
+                    const timeout = setTimeout(() => {
+                        cleanup();
+                        resolve(null);
+                    }, 12000);
 
-                function cleanup() {
-                    clearTimeout(timeout);
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                }
+                    function cleanup() {
+                        clearTimeout(timeout);
+                        delete window[cbName];
+                        if (script.parentNode) script.parentNode.removeChild(script);
+                    }
 
-                script.onload = function () {
-                    cleanup();
-                    const results = {};
-                    codes.forEach(code => {
-                        const varName = "hq_str_" + code;
-                        if (typeof window[varName] === "string" && window[varName] !== "") {
-                            results[code] = window[varName];
+                    window[cbName] = function(data) {
+                        cleanup();
+                        if (data && data.data) {
+                            const d = data.data;
+                            resolve({
+                                emSecid: emSecid,
+                                price: d.f43 || 0,
+                                change: d.f169 || d.f44 || 0,
+                                changePct: d.f170 || d.f45 || 0,
+                                volume: d.f47 || 0,
+                                amount: d.f48 || 0,
+                                open: d.f46 || 0,
+                                prevClose: d.f60 || 0,
+                            });
+                        } else {
+                            resolve(null);
                         }
-                    });
-                    resolve(results);
-                };
+                    };
 
-                script.onerror = function () {
-                    cleanup();
-                    reject(new Error("Sina realtime script error"));
-                };
-
-                document.head.appendChild(script);
+                    const script = document.createElement("script");
+                    script.src = url;
+                    script.onerror = function() {
+                        cleanup();
+                        resolve(null);
+                    };
+                    document.head.appendChild(script);
+                });
             });
-        }
 
-        // 解析新浪全球指数实时行情字符串
-        // 格式: "韩国KOSPI指数,5763.2200,-161.81,-2.73,2:27 AM,14:27:00,2026-03-19,14:30:40,5761.4000,5925.0300,5863.3900,5738.9500,262000"
-        function parseSinaRealtimeStr(str) {
-            if (!str || str === "") return null;
-            const parts = str.split(",");
-            if (parts.length < 10) return null;
-            return {
-                name: parts[0],
-                price: parseFloat(parts[1]) || 0,
-                change: parseFloat(parts[2]) || 0,
-                changePct: parseFloat(parts[3]) || 0,
-                open: parseFloat(parts[8] || parts[1]) || 0,
-                prevClose: parseFloat(parts[9]) || 0,
-                high: parseFloat(parts[10]) || 0,
-                low: parseFloat(parts[11]) || 0,
-                volume: parts.length > 12 ? parseFloat(parts[12]) || 0 : 0,
-            };
+            return Promise.all(promises);
         }
 
         // ======== 东方财富 JSONP K线获取（用于日韩指数的历史数据） ========
@@ -842,7 +837,7 @@
 
             // 分组：腾讯数据源 vs 新浪数据源
             const qqIndices = INDEX_ORDER.filter(id => INDEX_META[id].source === "qq");
-            const sinaIndices = INDEX_ORDER.filter(id => INDEX_META[id].source === "sina");
+            const emIndices = INDEX_ORDER.filter(id => INDEX_META[id].source === "em");
 
             // 并行获取腾讯 K线数据
             const qqPromises = qqIndices.map(async (secid) => {
@@ -860,8 +855,8 @@
                 }
             });
 
-            // 并行获取新浪数据源的指数（东方财富K线 + 新浪实时）
-            const sinaPromises = sinaIndices.map(async (secid) => {
+            // 并行获取东方财富数据源的指数（K线 + 实时行情）
+            const emPromises = emIndices.map(async (secid) => {
                 const meta = INDEX_META[secid];
 
                 // 1. 尝试东方财富 JSONP 获取 K线历史数据
@@ -890,7 +885,7 @@
                 console.warn(`[WARN] ${secid}: 仅实时数据可用`);
             });
 
-            await Promise.all([...qqPromises, ...sinaPromises]);
+            await Promise.all([...qqPromises, ...emPromises]);
 
             // 补充腾讯实时数据
             const needsQQRealtime = qqIndices.filter(secid => results[secid] && !results[secid].realtime);
@@ -919,29 +914,33 @@
                 }
             }
 
-            // 获取新浪实时数据
-            if (sinaIndices.length > 0) {
+            // 获取东方财富实时行情数据
+            if (emIndices.length > 0) {
                 try {
-                    const sinaCodes = sinaIndices.map(s => INDEX_META[s].sinaCode);
-                    const sinaResults = await fetchSinaRealtime(sinaCodes);
-                    sinaIndices.forEach(secid => {
-                        const meta = INDEX_META[secid];
-                        const rtStr = sinaResults[meta.sinaCode];
-                        if (rtStr && results[secid]) {
-                            const rt = parseSinaRealtimeStr(rtStr);
-                            if (rt && rt.price > 0) {
-                                results[secid].realtime = {
-                                    price: rt.price,
-                                    change: rt.change,
-                                    change_pct: rt.changePct,
-                                    volume: rt.volume || 0,
-                                    amount: 0,
-                                };
-                            }
+                    const emSecids = emIndices.map(s => INDEX_META[s].emSecid);
+                    const emResults = await fetchEMRealtime(emSecids);
+
+                    // 建立 emSecid -> secid 的映射
+                    const emToSecid = {};
+                    emIndices.forEach(secid => {
+                        emToSecid[INDEX_META[secid].emSecid] = secid;
+                    });
+
+                    emResults.forEach(rt => {
+                        if (!rt) return;
+                        const secid = emToSecid[rt.emSecid];
+                        if (secid && results[secid] && rt.price > 0) {
+                            results[secid].realtime = {
+                                price: rt.price,
+                                change: rt.change,
+                                change_pct: rt.changePct,
+                                volume: rt.volume || 0,
+                                amount: rt.amount || 0,
+                            };
                         }
                     });
                 } catch (e) {
-                    console.warn("[WARN] Sina realtime failed:", e.message);
+                    console.warn("[WARN] EM realtime failed:", e.message);
                 }
             }
 
