@@ -485,7 +485,7 @@
 
     <!-- 底部来源标识 -->
     <footer class="footer">
-        数据来源：腾讯财经 + 新浪财经 &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v2.3 (自动检测接口可用性)
+        数据来源：腾讯财经 &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v2.4 (日经/韩国指数暂不可用)
     </footer>
 
     <script>
@@ -520,7 +520,9 @@
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#4ade80", qqCode: "us.INX",    klineCode: "us.INX",   source: "qq" },
         };
 
-        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "b_NKY", "b_KOSPI", "us.IXIC", "us.INX"];
+        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "us.IXIC", "us.INX"];
+        // 注意：日经225(b_NKY)和韩国KOSPI(b_KOSPI)暂时移除，等待新浪接口恢复
+        // const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "b_NKY", "b_KOSPI", "us.IXIC", "us.INX"];
 
         // JSONP 全局计数器
         let jsonpCounter = 0;
