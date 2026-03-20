@@ -504,9 +504,6 @@
         let currentPreset = "ytd";
         let mainChartInstance = null;
         let compareChartInstance = null;
-        
-        // 记录哪些指数数据可用（运行时检测）
-        let availableIndices = new Set(INDEX_ORDER); // 初始假设全部可用
 
         // 指数代码映射（混合数据源：腾讯K线 + 新浪实时行情）
         const INDEX_META = {
@@ -523,6 +520,9 @@
         const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "us.IXIC", "us.INX"];
         // 注意：日经225(b_NKY)和韩国KOSPI(b_KOSPI)暂时移除，等待新浪接口恢复
         // const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "b_NKY", "b_KOSPI", "us.IXIC", "us.INX"];
+
+        // 记录哪些指数数据可用（运行时检测）
+        let availableIndices = new Set(INDEX_ORDER); // 初始假设全部可用
 
         // JSONP 全局计数器
         let jsonpCounter = 0;
