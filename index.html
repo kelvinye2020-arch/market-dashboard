@@ -485,7 +485,7 @@
 
     <!-- 底部来源标识 -->
     <footer class="footer">
-        数据来源：腾讯财经 + 新浪财经 &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v2.1
+        数据来源：腾讯财经 + 新浪财经 &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v2.3 (自动检测接口可用性)
     </footer>
 
     <script>
@@ -504,6 +504,9 @@
         let currentPreset = "ytd";
         let mainChartInstance = null;
         let compareChartInstance = null;
+        
+        // 记录哪些指数数据可用（运行时检测）
+        let availableIndices = new Set(INDEX_ORDER); // 初始假设全部可用
 
         // 指数代码映射（混合数据源：腾讯K线 + 新浪实时行情）
         const INDEX_META = {
@@ -800,13 +803,15 @@
                     const meta = INDEX_META[secid];
                     const rawData = await fetchQQKline(meta.klineCode, kltType, fmtBegin, fmtEnd, 800);
                     const parsed = parseQQKlineData(rawData, secid);
-                    if (parsed) {
+                    if (parsed && parsed.dates && parsed.dates.length > 0) {
                         results[secid] = parsed;
                     } else {
                         console.warn(`[WARN] No kline data for ${secid}`);
+                        // K线数据无效，暂时标记（可能实时数据可用）
                     }
                 } catch (e) {
                     console.error(`[ERROR] ${secid}:`, e);
+                    // 获取失败，不立即移除，可能实时数据还能获取
                 }
             });
 
@@ -866,10 +871,12 @@
                         sinaToSecid[INDEX_META[secid].sinaCode] = secid;
                     });
 
-                    Object.keys(sinaResults).forEach(sinaCode => {
-                        const secid = sinaToSecid[sinaCode];
+                    // 检测哪些新浪数据源成功获取到数据
+                    sinaIndices.forEach(secid => {
+                        const sinaCode = INDEX_META[secid].sinaCode;
                         const rtStr = sinaResults[sinaCode];
-                        if (secid && rtStr && results[secid]) {
+                        
+                        if (rtStr) {
                             const rt = parseSinaRealtimeStr(rtStr, INDEX_META[secid].name);
                             if (rt && rt.price > 0) {
                                 results[secid].realtime = {
@@ -879,11 +886,22 @@
                                     volume: rt.volume || 0,
                                     amount: 0,
                                 };
+                                console.log(`[SINA] ${secid} 数据获取成功: 价格=${rt.price}`);
+                            } else {
+                                // 数据无效，标记为不可用
+                                console.warn(`[SINA] ${secid} 返回数据无效`);
+                                availableIndices.delete(secid);
                             }
+                        } else {
+                            // 没有返回数据，标记为不可用
+                            console.warn(`[SINA] ${secid} 接口无返回`);
+                            availableIndices.delete(secid);
                         }
                     });
                 } catch (e) {
                     console.warn("[WARN] Sina realtime failed:", e.message);
+                    // 接口完全失败，所有新浪数据源指数标记为不可用
+                    sinaIndices.forEach(secid => availableIndices.delete(secid));
                 }
             }
 
@@ -999,6 +1017,9 @@
             btn.classList.add("loading");
             showLoading(true);
 
+            // 重置可用指数集合，重新检测
+            availableIndices = new Set(INDEX_ORDER);
+
             try {
                 let begin, end;
                 if (currentPreset === "custom") {
@@ -1012,8 +1033,21 @@
                     end = range.end;
                 }
 
-                // 直接从前端并行请求东方财富API
+                // 直接从前端并行请求API
                 allData = await fetchAllIndices(begin, end, currentKlt);
+
+                // 确保 activeSecid 指向一个可用的指数
+                if (!availableIndices.has(activeSecid)) {
+                    // 当前选中的指数不可用，切换到第一个可用的指数
+                    const firstAvailable = INDEX_ORDER.find(id => availableIndices.has(id));
+                    if (firstAvailable) {
+                        activeSecid = firstAvailable;
+                        console.log(`[INFO] 切换到可用指数: ${activeSecid}`);
+                    }
+                }
+
+                // 输出可用指数状态
+                console.log("[INFO] 可用指数:", Array.from(availableIndices));
 
                 renderCards();
                 renderStats();
@@ -1035,6 +1069,12 @@
             container.innerHTML = "";
 
             INDEX_ORDER.forEach(secid => {
+                // 只渲染可用的指数
+                if (!availableIndices.has(secid)) {
+                    console.log(`[SKIP] ${secid} 数据不可用，跳过渲染`);
+                    return;
+                }
+                
                 const data = allData[secid];
                 const meta = INDEX_META[secid];
                 if (!data) return;
@@ -1440,9 +1480,10 @@
             const series = [];
             const legendData = [];
 
-            // 1. 收集所有指数的日期，合并去重并排序，作为统一的X轴
+            // 1. 收集所有可用指数的日期，合并去重并排序，作为统一的X轴
             const allDatesSet = new Set();
             INDEX_ORDER.forEach(secid => {
+                if (!availableIndices.has(secid)) return; // 跳过不可用的指数
                 const data = allData[secid];
                 if (data && data.dates) data.dates.forEach(d => allDatesSet.add(d));
             });
@@ -1450,6 +1491,7 @@
 
             // 2. 每个指数按日期对齐到统一X轴，缺失交易日填 null
             INDEX_ORDER.forEach(secid => {
+                if (!availableIndices.has(secid)) return; // 跳过不可用的指数
                 const data = allData[secid];
                 const meta = INDEX_META[secid];
                 if (!data || !data.closes || data.closes.length === 0) return;
