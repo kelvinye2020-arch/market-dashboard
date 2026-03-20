@@ -388,6 +388,7 @@
         <div class="loading-ring"></div>
         <div class="loading-text">正在获取最新行情数据...</div>
         <div class="loading-sub">连接腾讯财经 + 新浪财经数据源</div>
+        <!-- 新浪财经用于日韩指数实时行情 -->
     </div>
 
     <!-- 错误提示 -->
@@ -510,8 +511,8 @@
             "sz399006":  { name: "创业板指",     short: "CYB",    color: "#a855f7", qqCode: "sz399006",  klineCode: "sz399006", source: "qq" },
             "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqCode: "hkHSI",     klineCode: "hkHSI",    source: "qq" },
             "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqCode: "hkHSTECH",  klineCode: "hkHSTECH", source: "qq" },
-            "b_NKY":     { name: "日经225",      short: "N225",   color: "#f472b6", emSecid: "100.N225",   source: "em" },
-            "b_KOSPI":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", emSecid: "100.KS11",   source: "em" },
+            "b_NKY":     { name: "日经225",      short: "N225",   color: "#f472b6", sinaCode: "int_nikkei", source: "sina" },
+            "b_KOSPI":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", sinaCode: "b_KOSPI",   source: "sina" },
             "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#16a34a", qqCode: "us.IXIC",   klineCode: "us.IXIC",  source: "qq" },
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#4ade80", qqCode: "us.INX",    klineCode: "us.INX",   source: "qq" },
         };
@@ -589,127 +590,84 @@
             };
         }
 
-        // ======== 新浪实时行情（JSONP 方式 — 设置全局变量） ========
-        // ======== 东方财富 JSONP 实时行情（用于日韩等海外指数） ========
-        // 每个 secid 单独请求，返回 { emSecid: {price, change, changePct, volume, amount} }
-        function fetchEMRealtime(emSecids) {
-            // emSecids: ["100.N225", "100.KS11"]
-            const promises = emSecids.map(emSecid => {
-                return new Promise((resolve) => {
-                    const cbName = `__emrt_${Date.now()}_${jsonpCounter++}`;
-                    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${emSecid}&fields=f43,f44,f45,f46,f47,f48,f57,f58,f60,f169,f170&ut=fa5fd1943c7b386f172d6893dbfba10b&fltt=2&invt=2&cb=${cbName}`;
-
-                    const timeout = setTimeout(() => {
-                        cleanup();
-                        resolve(null);
-                    }, 12000);
-
-                    function cleanup() {
-                        clearTimeout(timeout);
-                        delete window[cbName];
-                        if (script.parentNode) script.parentNode.removeChild(script);
-                    }
-
-                    window[cbName] = function(data) {
-                        cleanup();
-                        if (data && data.data) {
-                            const d = data.data;
-                            resolve({
-                                emSecid: emSecid,
-                                price: d.f43 || 0,
-                                change: d.f169 || d.f44 || 0,
-                                changePct: d.f170 || d.f45 || 0,
-                                volume: d.f47 || 0,
-                                amount: d.f48 || 0,
-                                open: d.f46 || 0,
-                                prevClose: d.f60 || 0,
-                            });
-                        } else {
-                            resolve(null);
-                        }
-                    };
-
-                    const script = document.createElement("script");
-                    script.src = url;
-                    script.onerror = function() {
-                        cleanup();
-                        resolve(null);
-                    };
-                    document.head.appendChild(script);
-                });
-            });
-
-            return Promise.all(promises);
-        }
-
-        // ======== 东方财富 JSONP K线获取（用于日韩指数的历史数据） ========
-        function fetchEMKline(emSecid, beginDate, endDate, klt) {
+        // ======== 新浪实时行情（用于日韩等海外指数） ========
+        // 新浪接口返回格式: var hq_str_int_nikkei="日经指数,44946.64,-408.35,-0.90";
+        // 或: var hq_str_b_KOSPI="韩国KOSPI指数,5763.2200,-161.81,-2.73,...";
+        function fetchSinaRealtime(sinaCodes) {
             return new Promise((resolve, reject) => {
-                const callbackName = `__em_cb_${Date.now()}_${jsonpCounter++}`;
-                const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${emSecid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=1&beg=${beginDate}&end=${endDate}&cb=${callbackName}`;
+                const codeList = sinaCodes.join(",");
+                const script = document.createElement("script");
+                script.src = `https://hq.sinajs.cn/list=${codeList}&t=${Date.now()}`;
 
                 const timeout = setTimeout(() => {
                     cleanup();
-                    resolve(null); // 不 reject，让程序继续
-                }, 12000);
+                    reject(new Error("Sina realtime timeout"));
+                }, 15000);
 
                 function cleanup() {
                     clearTimeout(timeout);
-                    delete window[callbackName];
                     if (script.parentNode) script.parentNode.removeChild(script);
                 }
 
-                window[callbackName] = function(data) {
+                script.onload = function () {
                     cleanup();
-                    resolve(data);
+                    const results = {};
+                    sinaCodes.forEach(code => {
+                        const varName = "hq_str_" + code;
+                        if (typeof window[varName] === "string" && window[varName] !== "") {
+                            results[code] = window[varName];
+                        }
+                    });
+                    resolve(results);
                 };
 
-                const script = document.createElement("script");
-                script.src = url;
-                script.onerror = function() {
+                script.onerror = function () {
                     cleanup();
-                    resolve(null); // 不 reject
+                    reject(new Error("Sina realtime script error"));
                 };
+
                 document.head.appendChild(script);
             });
         }
 
-        // 解析东方财富 K线数据
-        function parseEMKlineData(rawData, secid) {
-            if (!rawData || !rawData.data || !rawData.data.klines) return null;
-            const data = rawData.data;
-            const klines = data.klines || [];
-            const meta = INDEX_META[secid];
-
-            const parsed = {
-                name: data.name || meta.name,
-                code: data.code || "",
-                secid: secid,
-                short: meta.short,
-                dates: [], opens: [], closes: [], highs: [], lows: [],
+        // 解析新浪实时行情字符串
+        // 格式: 名称,最新价,涨跌额,涨跌幅 或 名称,最新价,涨跌额,涨跌幅,时间,日期,...
+        function parseSinaRealtimeStr(str, expectedName) {
+            if (!str || str === "") return null;
+            const parts = str.split(",");
+            if (parts.length < 4) return null;
+            
+            const name = parts[0];
+            const price = parseFloat(parts[1]) || 0;
+            const change = parseFloat(parts[2]) || 0;
+            const changePct = parseFloat(parts[3]) || 0;
+            
+            // b_KOSPI 格式更详细：名称,最新价,涨跌额,涨跌幅,时间,日期,日期时间,开盘,最高,最低,昨收,成交量
+            let open = 0, high = 0, low = 0, prevClose = 0, volume = 0;
+            if (parts.length >= 12) {
+                open = parseFloat(parts[7]) || 0;
+                high = parseFloat(parts[8]) || 0;
+                low = parseFloat(parts[9]) || 0;
+                prevClose = parseFloat(parts[10]) || 0;
+                volume = parseFloat(parts[11]) || 0;
+            }
+            
+            return {
+                name: name,
+                price: price,
+                change: change,
+                changePct: changePct,
+                open: open,
+                high: high,
+                low: low,
+                prevClose: prevClose,
+                volume: volume,
+            };
+        }
                 volumes: [], amounts: [], changes: [], change_pcts: [],
             };
 
             for (const line of klines) {
-                const parts = line.split(",");
-                if (parts.length >= 6) {
-                    parsed.dates.push(parts[0]);
-                    parsed.opens.push(parseFloat(parts[1]));
-                    parsed.closes.push(parseFloat(parts[2]));
-                    parsed.highs.push(parseFloat(parts[3]));
-                    parsed.lows.push(parseFloat(parts[4]));
-                    parsed.volumes.push(parseFloat(parts[5]));
-                    parsed.amounts.push(parts.length > 6 ? parseFloat(parts[6]) : 0);
-                    const chgPct = parts.length > 8 ? parseFloat(parts[8]) : 0;
-                    const chg = parts.length > 9 ? parseFloat(parts[9]) : 0;
-                    parsed.changes.push(chg);
-                    parsed.change_pcts.push(chgPct);
-                }
-            }
-
-            return parsed;
-        }
-
         // ======== 腾讯K线历史数据 ========
         async function fetchQQKline(klineCode, kltType, startDate, endDate, count) {
             // kltType: "day", "week", "month"
@@ -837,7 +795,7 @@
 
             // 分组：腾讯数据源 vs 新浪数据源
             const qqIndices = INDEX_ORDER.filter(id => INDEX_META[id].source === "qq");
-            const emIndices = INDEX_ORDER.filter(id => INDEX_META[id].source === "em");
+            const sinaIndices = INDEX_ORDER.filter(id => INDEX_META[id].source === "sina");
 
             // 并行获取腾讯 K线数据
             const qqPromises = qqIndices.map(async (secid) => {
@@ -855,24 +813,10 @@
                 }
             });
 
-            // 并行获取东方财富数据源的指数（K线 + 实时行情）
-            const emPromises = emIndices.map(async (secid) => {
+            // 新浪数据源的指数（仅实时行情，无K线）
+            const sinaPromises = sinaIndices.map(async (secid) => {
                 const meta = INDEX_META[secid];
-
-                // 1. 尝试东方财富 JSONP 获取 K线历史数据
-                try {
-                    const emData = await fetchEMKline(meta.emSecid, beginDate, endDate, klt);
-                    const parsed = parseEMKlineData(emData, secid);
-                    if (parsed && parsed.dates.length > 0) {
-                        results[secid] = parsed;
-                        console.log(`[OK] ${secid}: 东方财富K线 ${parsed.dates.length} 条`);
-                        return;
-                    }
-                } catch (e) {
-                    console.warn(`[WARN] EM kline for ${secid} failed:`, e.message);
-                }
-
-                // 2. 东方财富不可用，创建仅含实时数据的空壳
+                // 新浪接口没有K线历史数据，创建仅含实时数据的空壳
                 results[secid] = {
                     name: meta.name,
                     code: meta.short,
@@ -882,10 +826,9 @@
                     volumes: [], amounts: [], changes: [], change_pcts: [],
                     noKlineData: true, // 标记无K线数据
                 };
-                console.warn(`[WARN] ${secid}: 仅实时数据可用`);
             });
 
-            await Promise.all([...qqPromises, ...emPromises]);
+            await Promise.all([...qqPromises, ...sinaPromises]);
 
             // 补充腾讯实时数据
             const needsQQRealtime = qqIndices.filter(secid => results[secid] && !results[secid].realtime);
@@ -914,33 +857,36 @@
                 }
             }
 
-            // 获取东方财富实时行情数据
-            if (emIndices.length > 0) {
+            // 获取新浪实时行情数据（日韩指数）
+            if (sinaIndices.length > 0) {
                 try {
-                    const emSecids = emIndices.map(s => INDEX_META[s].emSecid);
-                    const emResults = await fetchEMRealtime(emSecids);
+                    const sinaCodes = sinaIndices.map(s => INDEX_META[s].sinaCode);
+                    const sinaResults = await fetchSinaRealtime(sinaCodes);
 
-                    // 建立 emSecid -> secid 的映射
-                    const emToSecid = {};
-                    emIndices.forEach(secid => {
-                        emToSecid[INDEX_META[secid].emSecid] = secid;
+                    // 建立 sinaCode -> secid 的映射
+                    const sinaToSecid = {};
+                    sinaIndices.forEach(secid => {
+                        sinaToSecid[INDEX_META[secid].sinaCode] = secid;
                     });
 
-                    emResults.forEach(rt => {
-                        if (!rt) return;
-                        const secid = emToSecid[rt.emSecid];
-                        if (secid && results[secid] && rt.price > 0) {
-                            results[secid].realtime = {
-                                price: rt.price,
-                                change: rt.change,
-                                change_pct: rt.changePct,
-                                volume: rt.volume || 0,
-                                amount: rt.amount || 0,
-                            };
+                    Object.keys(sinaResults).forEach(sinaCode => {
+                        const secid = sinaToSecid[sinaCode];
+                        const rtStr = sinaResults[sinaCode];
+                        if (secid && rtStr && results[secid]) {
+                            const rt = parseSinaRealtimeStr(rtStr, INDEX_META[secid].name);
+                            if (rt && rt.price > 0) {
+                                results[secid].realtime = {
+                                    price: rt.price,
+                                    change: rt.change,
+                                    change_pct: rt.changePct,
+                                    volume: rt.volume || 0,
+                                    amount: 0,
+                                };
+                            }
                         }
                     });
                 } catch (e) {
-                    console.warn("[WARN] EM realtime failed:", e.message);
+                    console.warn("[WARN] Sina realtime failed:", e.message);
                 }
             }
 
