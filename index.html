@@ -387,7 +387,7 @@
     <div class="loading-overlay" id="loadingOverlay">
         <div class="loading-ring"></div>
         <div class="loading-text">正在获取最新行情数据...</div>
-        <div class="loading-sub">连接腾讯财经 + 东方财富数据源</div>
+        <div class="loading-sub">腾讯财经（主源）+ 东方财富（备用）</div>
     </div>
 
     <!-- 错误提示 -->
@@ -484,13 +484,14 @@
 
     <!-- 底部来源标识 -->
     <footer class="footer">
-        数据来源：腾讯财经 + 东方财富 &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v3.0
+        数据来源：腾讯财经（主源）+ 东方财富（备用） &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v4.1
     </footer>
 
     <script>
         // ============================================================
-        //  全球指数智能看板 v3.0 — 双源互备架构
-        //  腾讯财经（A/港/美 K线+实时）+ 东方财富（日韩 K线+实时）
+        //  全球指数智能看板 v4.1 — 腾讯主源 + 东方财富备用
+        //  K线: 腾讯财经优先（A/港/美），东方财富备用（日韩 + 全量降级）
+        //  实时: 腾讯财经优先（A/港/美），东方财富备用（日韩）
         // ============================================================
 
         // ======== 全局状态 ========
@@ -503,19 +504,19 @@
         let mainChartInstance = null;
         let compareChartInstance = null;
 
-        // 指数代码映射（K线全部走东方财富，实时行情分源）
-        // rtSource: "qq" → 实时行情用腾讯财经, "eastmoney" → 实时行情用东方财富
-        // emSecid: 东方财富K线+实时行情代码
-        // qqCode: 腾讯实时行情代码（仅rtSource=qq时使用）
+        // 指数代码映射
+        // qqKline: 腾讯K线代码（主源）。null=腾讯不支持，走东方财富
+        // qqCode: 腾讯实时行情代码
+        // emSecid: 东方财富代码（K线备用+日韩实时）
         const INDEX_META = {
-            "sh000001":  { name: "上证指数",     short: "SSE",    color: "#3b82f6", emSecid: "1.000001",    qqCode: "sh000001",  rtSource: "qq" },
-            "sz399006":  { name: "创业板指",     short: "CYB",    color: "#38bdf8", emSecid: "0.399006",    qqCode: "sz399006",  rtSource: "qq" },
-            "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", emSecid: "100.HSI",     qqCode: "hkHSI",     rtSource: "qq" },
-            "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", emSecid: "124.HSTECH",  qqCode: "hkHSTECH",  rtSource: "qq" },
-            "em_N225":   { name: "日经225",      short: "N225",   color: "#f472b6", emSecid: "100.N225",    rtSource: "eastmoney" },
-            "em_KS11":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", emSecid: "100.KS11",    rtSource: "eastmoney" },
-            "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#7c3aed", emSecid: "100.NDX",     qqCode: "us.IXIC",   rtSource: "qq" },
-            "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", emSecid: "100.SPX",     qqCode: "us.INX",    rtSource: "qq" },
+            "sh000001":  { name: "上证指数",     short: "SSE",    color: "#3b82f6", qqKline: "sh000001",  qqCode: "sh000001",  emSecid: "1.000001" },
+            "sz399006":  { name: "创业板指",     short: "CYB",    color: "#38bdf8", qqKline: "sz399006",  qqCode: "sz399006",  emSecid: "0.399006" },
+            "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqKline: "hkHSI",     qqCode: "hkHSI",     emSecid: "100.HSI" },
+            "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqKline: "hkHSTECH",  qqCode: "hkHSTECH",  emSecid: "124.HSTECH" },
+            "em_N225":   { name: "日经225",      short: "N225",   color: "#f472b6", qqKline: null,        qqCode: null,        emSecid: "100.N225" },
+            "em_KS11":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", qqKline: null,        qqCode: null,        emSecid: "100.KS11" },
+            "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#7c3aed", qqKline: "us.IXIC",   qqCode: "us.IXIC",   emSecid: "100.NDX" },
+            "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX" },
         };
 
         // 8个指数全部加入显示队列
@@ -703,7 +704,7 @@
             if (!rawData || rawData.code !== 0 || !rawData.data) return null;
 
             const meta = INDEX_META[secid];
-            const klineCode = meta.klineCode;
+            const klineCode = meta.qqKline;
 
             // 腾讯返回的 data 中，key 是代码名
             const stockData = rawData.data[klineCode];
@@ -771,8 +772,8 @@
 
             // 从 K 线 API 的 qt 字段提取实时行情
             if (stockData.qt) {
-                const klineCode = meta.klineCode;
-                const qtData = stockData.qt[klineCode];
+                const qqKline = meta.qqKline;
+                const qtData = stockData.qt[qqKline];
                 if (qtData && Array.isArray(qtData) && qtData.length > 35) {
                     const price = parseFloat(qtData[3]) || 0;
                     const prevCloseRt = parseFloat(qtData[4]) || 0;
@@ -796,44 +797,75 @@
             return parsed;
         }
 
-        // ======== 获取所有指数数据（K线全部走东方财富，实时行情分源） ========
+        // ======== 获取所有指数数据（腾讯主源 + 东方财富备用） ========
         async function fetchAllIndices(beginDate, endDate, klt) {
             const results = {};
 
-            // 1. 所有指数的K线历史数据统一走东方财富（含准确成交额）
+            // K线类型映射: 东方财富 klt -> 腾讯类型
+            const kltMap = { 101: "day", 102: "week", 103: "month" };
+            const qqKltType = kltMap[klt] || "day";
+
+            // 格式化日期给腾讯（YYYYMMDD -> YYYY-MM-DD）
+            const fmtQQDate = (d) => d.length === 8 ? `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}` : d;
+            const qqBegin = fmtQQDate(beginDate);
+            const qqEnd = fmtQQDate(endDate);
+
+            // 1. K线历史数据：腾讯优先，东方财富备用
             const klinePromises = INDEX_ORDER.map(async (secid) => {
                 const meta = INDEX_META[secid];
-                try {
-                    const klines = await fetchEMKline(meta.emSecid, klt, beginDate, endDate);
-                    const parsed = parseEMKlineData(klines, secid);
-                    if (parsed && parsed.dates && parsed.dates.length > 0) {
-                        results[secid] = parsed;
-                    } else {
-                        console.warn(`[EM] ${secid} K线数据为空`);
-                        results[secid] = {
-                            name: meta.name, code: meta.short, secid: secid, short: meta.short,
-                            dates: [], opens: [], closes: [], highs: [], lows: [],
-                            volumes: [], amounts: [], changes: [], change_pcts: [],
-                            noKlineData: true,
-                        };
+                const emptyResult = {
+                    name: meta.name, code: meta.short, secid: secid, short: meta.short,
+                    dates: [], opens: [], closes: [], highs: [], lows: [],
+                    volumes: [], amounts: [], changes: [], change_pcts: [],
+                    noKlineData: true,
+                };
+
+                // 策略: 有腾讯K线代码就先试腾讯，失败再试东方财富；无腾讯代码直接试东方财富
+                let parsed = null;
+
+                // 1a. 尝试腾讯K线（A/港/美股）
+                if (meta.qqKline) {
+                    try {
+                        const rawData = await fetchQQKline(meta.qqKline, qqKltType, qqBegin, qqEnd, 2000);
+                        parsed = parseQQKlineData(rawData, secid);
+                        if (parsed && parsed.dates && parsed.dates.length > 0) {
+                            parsed.klineSource = "qq";
+                            console.log(`[QQ] ${secid} K线成功: ${parsed.dates.length}天`);
+                        } else {
+                            parsed = null;
+                            console.warn(`[QQ] ${secid} K线数据为空，尝试东方财富备用`);
+                        }
+                    } catch (e) {
+                        console.warn(`[QQ] ${secid} K线失败: ${e.message}，尝试东方财富备用`);
                     }
-                } catch (e) {
-                    console.error(`[EM] ${secid} K线异常:`, e);
-                    results[secid] = {
-                        name: meta.name, code: meta.short, secid: secid, short: meta.short,
-                        dates: [], opens: [], closes: [], highs: [], lows: [],
-                        volumes: [], amounts: [], changes: [], change_pcts: [],
-                        noKlineData: true,
-                    };
                 }
+
+                // 1b. 备用：东方财富K线（腾讯失败或日韩指数）
+                if (!parsed) {
+                    try {
+                        const klines = await fetchEMKline(meta.emSecid, klt, beginDate, endDate);
+                        parsed = parseEMKlineData(klines, secid);
+                        if (parsed && parsed.dates && parsed.dates.length > 0) {
+                            parsed.klineSource = "em";
+                            console.log(`[EM] ${secid} K线成功: ${parsed.dates.length}天`);
+                        } else {
+                            parsed = null;
+                            console.warn(`[EM] ${secid} K线数据也为空`);
+                        }
+                    } catch (e) {
+                        console.warn(`[EM] ${secid} K线也失败: ${e.message}`);
+                    }
+                }
+
+                results[secid] = parsed || emptyResult;
             });
             await Promise.all(klinePromises);
 
-            // 2. 实时行情按 rtSource 分组
-            const qqRtIndices = INDEX_ORDER.filter(id => INDEX_META[id].rtSource === "qq" && INDEX_META[id].qqCode);
-            const emRtIndices = INDEX_ORDER.filter(id => INDEX_META[id].rtSource === "eastmoney");
+            // 2. 实时行情：腾讯优先（A/港/美），东方财富备用（日韩）
+            const qqRtIndices = INDEX_ORDER.filter(id => INDEX_META[id].qqCode);
+            const emOnlyIndices = INDEX_ORDER.filter(id => !INDEX_META[id].qqCode);
 
-            // 2a. 腾讯实时行情（A股、港股、美股）
+            // 2a. 腾讯实时行情（A股、港股、美股 — 6个指数）
             if (qqRtIndices.length > 0) {
                 try {
                     const rtCodes = qqRtIndices.map(s => INDEX_META[s].qqCode);
@@ -859,8 +891,8 @@
                 }
             }
 
-            // 2b. 东方财富实时行情（日韩指数）
-            const emRtPromises = emRtIndices.map(async (secid) => {
+            // 2b. 东方财富实时行情（日韩指数 — 腾讯不支持）
+            const emRtPromises = emOnlyIndices.map(async (secid) => {
                 try {
                     const meta = INDEX_META[secid];
                     const rt = await fetchEMRealtime(meta.emSecid);
@@ -874,7 +906,7 @@
                                 amount: rt.amount,
                             };
                         }
-                        console.log(`[EM] ${secid} 实时数据获取成功: 价格=${rt.price}`);
+                        console.log(`[EM] ${secid} 实时数据成功: 价格=${rt.price}`);
                     } else {
                         console.warn(`[EM] ${secid} 实时数据无效`);
                         availableIndices.delete(secid);
