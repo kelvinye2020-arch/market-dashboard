@@ -762,8 +762,8 @@
                 parsed.highs.push(high);
                 parsed.lows.push(low);
                 parsed.volumes.push(volume);
-                // 腾讯K线不返回成交额，用成交量×收盘价估算（量级正确，当天会被实时数据覆盖）
-                parsed.amounts.push(volume * close);
+                // 腾讯K线不返回成交额字段，填0（不估算，避免误导）
+                parsed.amounts.push(0);
                 parsed.changes.push(change);
                 parsed.change_pcts.push(changePct);
 
@@ -1196,6 +1196,10 @@
 
             const totalAmount = amounts.reduce((a, b) => a + b, 0);
             const avgAmount = amounts.length > 0 ? totalAmount / amounts.length : 0;
+            // 腾讯K线源无真实成交额，统计栏显示--
+            const hasRealAmountStats = data.klineSource !== "qq";
+            const avgAmountDisplay = hasRealAmountStats ? fmtAmount(avgAmount) : "--";
+            const totalAmountDisplay = hasRealAmountStats ? fmtAmount(totalAmount) : "--";
 
             const ytdClass = ytdReturn >= 0 ? "up" : "down";
 
@@ -1225,8 +1229,8 @@
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">日均成交额</div>
-                    <div class="stat-value" style="color:var(--accent-cyan)">${fmtAmount(avgAmount)}</div>
-                    <div class="stat-sub" style="color:var(--text-muted)">累计 ${fmtAmount(totalAmount)}</div>
+                    <div class="stat-value" style="color:var(--accent-cyan)">${avgAmountDisplay}</div>
+                    <div class="stat-sub" style="color:var(--text-muted)">累计 ${totalAmountDisplay}</div>
                 </div>
             `;
         }
@@ -1239,6 +1243,13 @@
 
             const kltLabel = currentKlt === 103 ? "月线" : currentKlt === 102 ? "周线" : "日线";
             document.getElementById("chartTitle").textContent = `${meta.name} - ${kltLabel}走势`;
+
+            // 腾讯K线源无真实成交额，隐藏成交额开关
+            const hasRealAmount = data.klineSource !== "qq";
+            const volToggle = document.getElementById("volumeToggle");
+            volToggle.style.display = hasRealAmount ? "" : "none";
+            // 腾讯源时强制关闭成交额显示
+            const effectiveShowVolume = hasRealAmount && showVolume;
 
             const chartEl = document.getElementById("mainChart");
 
@@ -1266,9 +1277,9 @@
             }
 
             if (chartType === "area") {
-                renderAreaChart(data, meta);
+                renderAreaChart(data, meta, effectiveShowVolume);
             } else {
-                renderCandleChart(data, meta);
+                renderCandleChart(data, meta, effectiveShowVolume);
             }
         }
 
@@ -1284,8 +1295,8 @@
             });
         }
 
-        function renderAreaChart(data, meta) {
-            const grids = showVolume ? [
+        function renderAreaChart(data, meta, showVol) {
+            const grids = showVol ? [
                 { top: 40, bottom: "32%", left: 70, right: 40 },
                 { top: "74%", bottom: 50, left: 70, right: 40 },
             ] : [
@@ -1296,7 +1307,7 @@
                 type: "category", data: data.dates, gridIndex: 0,
                 axisLine: { lineStyle: { color: "#2a3654" } },
                 axisTick: { show: false },
-                axisLabel: { color: "#6b7280", fontSize: 11, show: !showVolume },
+                axisLabel: { color: "#6b7280", fontSize: 11, show: !showVol },
                 splitLine: { show: false },
             }];
 
@@ -1326,9 +1337,9 @@
             }];
 
             const dataZooms = [{
-                type: "inside", xAxisIndex: showVolume ? [0, 1] : [0], start: 0, end: 100,
+                type: "inside", xAxisIndex: showVol ? [0, 1] : [0], start: 0, end: 100,
             }, {
-                type: "slider", xAxisIndex: showVolume ? [0, 1] : [0],
+                type: "slider", xAxisIndex: showVol ? [0, 1] : [0],
                 start: 0, end: 100, height: 20, bottom: 6,
                 borderColor: "transparent",
                 backgroundColor: "rgba(255,255,255,0.03)",
@@ -1337,7 +1348,7 @@
                 textStyle: { color: "#6b7280" },
             }];
 
-            if (showVolume) {
+            if (showVol) {
                 xAxes.push({
                     type: "category", data: data.dates, gridIndex: 1,
                     axisLine: { lineStyle: { color: "#2a3654" } },
@@ -1374,12 +1385,13 @@
                         const chg = data.change_pcts[idx];
                         const amt = data.amounts[idx] || 0;
                         const chgColor = chg >= 0 ? "#ef4444" : "#10b981";
+                        const amtText = (data.klineSource === "qq" && amt === 0) ? "--" : fmtAmount(amt);
                         return `
                             <div style="font-weight:600;margin-bottom:6px">${params[0].axisValue}</div>
                             <div>收盘: <b>${fmtNum(close)}</b> &nbsp; 开盘: ${fmtNum(open)}</div>
                             <div>最高: <span style="color:#ef4444">${fmtNum(high)}</span> &nbsp; 最低: <span style="color:#10b981">${fmtNum(low)}</span></div>
                             <div style="color:${chgColor};font-weight:600;margin-top:4px">涨跌幅: ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</div>
-                            <div style="color:#06b6d4;margin-top:2px">成交额: ${fmtAmount(amt)}</div>
+                            <div style="color:#06b6d4;margin-top:2px">成交额: ${amtText}</div>
                         `;
                     }
                 },
@@ -1391,10 +1403,10 @@
             mainChartInstance.setOption(option, true);
         }
 
-        function renderCandleChart(data, meta) {
+        function renderCandleChart(data, meta, showVol) {
             const candleData = data.dates.map((_, i) => [data.opens[i], data.closes[i], data.lows[i], data.highs[i]]);
 
-            const grids = showVolume ? [
+            const grids = showVol ? [
                 { top: 40, bottom: "32%", left: 70, right: 40 },
                 { top: "74%", bottom: 50, left: 70, right: 40 },
             ] : [
@@ -1405,7 +1417,7 @@
                 type: "category", data: data.dates, gridIndex: 0,
                 axisLine: { lineStyle: { color: "#2a3654" } },
                 axisTick: { show: false },
-                axisLabel: { color: "#6b7280", fontSize: 11, show: !showVolume },
+                axisLabel: { color: "#6b7280", fontSize: 11, show: !showVol },
                 splitLine: { show: false },
             }];
 
@@ -1427,9 +1439,9 @@
             }];
 
             const dataZooms = [{
-                type: "inside", xAxisIndex: showVolume ? [0, 1] : [0], start: 0, end: 100,
+                type: "inside", xAxisIndex: showVol ? [0, 1] : [0], start: 0, end: 100,
             }, {
-                type: "slider", xAxisIndex: showVolume ? [0, 1] : [0],
+                type: "slider", xAxisIndex: showVol ? [0, 1] : [0],
                 start: 0, end: 100, height: 20, bottom: 6,
                 borderColor: "transparent", backgroundColor: "rgba(255,255,255,0.03)",
                 fillerColor: "rgba(59,130,246,0.15)",
@@ -1437,7 +1449,7 @@
                 textStyle: { color: "#6b7280" },
             }];
 
-            if (showVolume) {
+            if (showVol) {
                 xAxes.push({
                     type: "category", data: data.dates, gridIndex: 1,
                     axisLine: { lineStyle: { color: "#2a3654" } },
@@ -1471,12 +1483,13 @@
                         const chg = data.change_pcts[idx];
                         const amt = data.amounts[idx] || 0;
                         const chgColor = chg >= 0 ? "#ef4444" : "#10b981";
+                        const amtText = (data.klineSource === "qq" && amt === 0) ? "--" : fmtAmount(amt);
                         return `
                             <div style="font-weight:600;margin-bottom:6px">${data.dates[idx]}</div>
                             <div>开盘: ${fmtNum(data.opens[idx])} &nbsp; 收盘: <b>${fmtNum(data.closes[idx])}</b></div>
                             <div>最高: <span style="color:#ef4444">${fmtNum(data.highs[idx])}</span> &nbsp; 最低: <span style="color:#10b981">${fmtNum(data.lows[idx])}</span></div>
                             <div style="color:${chgColor};font-weight:600;margin-top:4px">涨跌幅: ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</div>
-                            <div style="color:#06b6d4;margin-top:2px">成交额: ${fmtAmount(amt)}</div>
+                            <div style="color:#06b6d4;margin-top:2px">成交额: ${amtText}</div>
                         `;
                     }
                 },
