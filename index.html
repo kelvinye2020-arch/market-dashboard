@@ -785,6 +785,9 @@
                     let changePctVal = qtData[32] || "0";
                     changePctVal = parseFloat(String(changePctVal).replace("%", "")) || 0;
                     const amount = parseFloat(qtData[37]) || 0;
+                    // 美股 qtData[37] 数值异常大（不是"万"单位），不可信，置0
+                    const isUS = (meta.qqKline || "").startsWith("us.");
+                    const rtAmt = isUS ? 0 : amount * 10000;
 
                     if (price > 0) {
                         parsed.realtime = {
@@ -792,7 +795,7 @@
                             change: changeVal,
                             change_pct: changePctVal,
                             volume: 0,
-                            amount: amount * 10000, // 万 -> 元
+                            amount: rtAmt,
                         };
                     }
                 }
