@@ -508,11 +508,12 @@
         // qqKline: 腾讯K线代码（主源）。null=腾讯不支持，走东方财富
         // qqCode: 腾讯实时行情代码
         // emSecid: 东方财富代码（K线备用+日韩实时）
+        // preferEM: true = K线优先东方财富（有成交额），腾讯备用；false/省略 = 腾讯优先
         const INDEX_META = {
-            "sh000001":  { name: "上证指数",     short: "SSE",    color: "#3b82f6", qqKline: "sh000001",  qqCode: "sh000001",  emSecid: "1.000001" },
-            "sz399006":  { name: "创业板指",     short: "CYB",    color: "#38bdf8", qqKline: "sz399006",  qqCode: "sz399006",  emSecid: "0.399006" },
-            "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqKline: "hkHSI",     qqCode: "hkHSI",     emSecid: "100.HSI" },
-            "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqKline: "hkHSTECH",  qqCode: "hkHSTECH",  emSecid: "124.HSTECH" },
+            "sh000001":  { name: "上证指数",     short: "SSE",    color: "#3b82f6", qqKline: "sh000001",  qqCode: "sh000001",  emSecid: "1.000001",   preferEM: true },
+            "sz399006":  { name: "创业板指",     short: "CYB",    color: "#38bdf8", qqKline: "sz399006",  qqCode: "sz399006",  emSecid: "0.399006",   preferEM: true },
+            "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqKline: "hkHSI",     qqCode: "hkHSI",     emSecid: "100.HSI",    preferEM: true },
+            "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqKline: "hkHSTECH",  qqCode: "hkHSTECH",  emSecid: "124.HSTECH", preferEM: true },
             "em_N225":   { name: "日经225",      short: "N225",   color: "#f472b6", qqKline: null,        qqCode: null,        emSecid: "100.N225" },
             "em_KS11":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", qqKline: null,        qqCode: null,        emSecid: "100.KS11" },
             "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#7c3aed", qqKline: "us.IXIC",   qqCode: "us.IXIC",   emSecid: "100.NDX" },
@@ -817,7 +818,7 @@
             const qqBegin = fmtQQDate(beginDate);
             const qqEnd = fmtQQDate(endDate);
 
-            // 1. K线历史数据：腾讯优先，东方财富备用
+            // 1. K线历史数据：preferEM=true的指数（A/港股）东方财富优先（有成交额），其余腾讯优先
             const klinePromises = INDEX_ORDER.map(async (secid) => {
                 const meta = INDEX_META[secid];
                 const emptyResult = {
@@ -827,41 +828,58 @@
                     noKlineData: true,
                 };
 
-                // 策略: 有腾讯K线代码就先试腾讯，失败再试东方财富；无腾讯代码直接试东方财富
                 let parsed = null;
 
-                // 1a. 尝试腾讯K线（A/港/美股）
-                if (meta.qqKline) {
-                    try {
-                        const rawData = await fetchQQKline(meta.qqKline, qqKltType, qqBegin, qqEnd, 2000);
-                        parsed = parseQQKlineData(rawData, secid);
-                        if (parsed && parsed.dates && parsed.dates.length > 0) {
-                            parsed.klineSource = "qq";
-                            console.log(`[QQ] ${secid} K线成功: ${parsed.dates.length}天`);
-                        } else {
-                            parsed = null;
-                            console.warn(`[QQ] ${secid} K线数据为空，尝试东方财富备用`);
-                        }
-                    } catch (e) {
-                        console.warn(`[QQ] ${secid} K线失败: ${e.message}，尝试东方财富备用`);
-                    }
-                }
-
-                // 1b. 备用：东方财富K线（腾讯失败或日韩指数）
-                if (!parsed) {
+                // 辅助函数：尝试东方财富K线
+                const tryEM = async () => {
                     try {
                         const klines = await fetchEMKline(meta.emSecid, klt, beginDate, endDate);
-                        parsed = parseEMKlineData(klines, secid);
-                        if (parsed && parsed.dates && parsed.dates.length > 0) {
-                            parsed.klineSource = "em";
-                            console.log(`[EM] ${secid} K线成功: ${parsed.dates.length}天`);
-                        } else {
-                            parsed = null;
-                            console.warn(`[EM] ${secid} K线数据也为空`);
+                        const p = parseEMKlineData(klines, secid);
+                        if (p && p.dates && p.dates.length > 0) {
+                            p.klineSource = "em";
+                            console.log(`[EM] ${secid} K线成功: ${p.dates.length}天`);
+                            return p;
                         }
                     } catch (e) {
-                        console.warn(`[EM] ${secid} K线也失败: ${e.message}`);
+                        console.warn(`[EM] ${secid} K线失败: ${e.message}`);
                     }
+                    return null;
+                };
+
+                // 辅助函数：尝试腾讯K线
+                const tryQQ = async () => {
+                    if (!meta.qqKline) return null;
+                    try {
+                        const rawData = await fetchQQKline(meta.qqKline, qqKltType, qqBegin, qqEnd, 2000);
+                        const p = parseQQKlineData(rawData, secid);
+                        if (p && p.dates && p.dates.length > 0) {
+                            p.klineSource = "qq";
+                            console.log(`[QQ] ${secid} K线成功: ${p.dates.length}天`);
+                            return p;
+                        }
+                    } catch (e) {
+                        console.warn(`[QQ] ${secid} K线失败: ${e.message}`);
+                    }
+                    return null;
+                };
+
+                if (meta.preferEM) {
+                    // A股/港股：东方财富优先（有成交额），腾讯备用
+                    parsed = await tryEM();
+                    if (!parsed) {
+                        console.warn(`[EM] ${secid} 失败，降级腾讯K线`);
+                        parsed = await tryQQ();
+                    }
+                } else if (meta.qqKline) {
+                    // 美股：腾讯优先，东方财富备用
+                    parsed = await tryQQ();
+                    if (!parsed) {
+                        console.warn(`[QQ] ${secid} 失败，降级东方财富K线`);
+                        parsed = await tryEM();
+                    }
+                } else {
+                    // 日韩：只走东方财富
+                    parsed = await tryEM();
                 }
 
                 results[secid] = parsed || emptyResult;
