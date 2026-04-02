@@ -1207,8 +1207,8 @@
 
             const totalAmount = amounts.reduce((a, b) => a + b, 0);
             const avgAmount = amounts.length > 0 ? totalAmount / amounts.length : 0;
-            // 腾讯K线源无真实成交额，统计栏显示--
-            const hasRealAmountStats = data.klineSource !== "qq";
+            // 成交额数据是否有效：至少存在非零值
+            const hasRealAmountStats = amounts.some(a => a > 0);
             const avgAmountDisplay = hasRealAmountStats ? fmtAmount(avgAmount) : "--";
             const totalAmountDisplay = hasRealAmountStats ? fmtAmount(totalAmount) : "--";
 
@@ -1255,11 +1255,12 @@
             const kltLabel = currentKlt === 103 ? "月线" : currentKlt === 102 ? "周线" : "日线";
             document.getElementById("chartTitle").textContent = `${meta.name} - ${kltLabel}走势`;
 
-            // 腾讯K线源无真实成交额，隐藏成交额开关
-            const hasRealAmount = data.klineSource !== "qq";
+            // 判断是否有真实成交额数据：amounts 数组中存在非零值
+            const amounts = data.amounts || [];
+            const hasRealAmount = amounts.some(a => a > 0);
             const volToggle = document.getElementById("volumeToggle");
             volToggle.style.display = hasRealAmount ? "" : "none";
-            // 腾讯源时强制关闭成交额显示
+            // 无成交额数据时强制关闭成交额柱状图
             const effectiveShowVolume = hasRealAmount && showVolume;
 
             const chartEl = document.getElementById("mainChart");
@@ -1396,7 +1397,7 @@
                         const chg = data.change_pcts[idx];
                         const amt = data.amounts[idx] || 0;
                         const chgColor = chg >= 0 ? "#ef4444" : "#10b981";
-                        const amtLine = (data.klineSource === "qq" && amt === 0) ? "" : `<div style="color:#06b6d4;margin-top:2px">成交额: ${fmtAmount(amt)}</div>`;
+                        const amtLine = amt > 0 ? `<div style="color:#06b6d4;margin-top:2px">成交额: ${fmtAmount(amt)}</div>` : "";
                         return `
                             <div style="font-weight:600;margin-bottom:6px">${params[0].axisValue}</div>
                             <div>收盘: <b>${fmtNum(close)}</b> &nbsp; 开盘: ${fmtNum(open)}</div>
@@ -1494,7 +1495,7 @@
                         const chg = data.change_pcts[idx];
                         const amt = data.amounts[idx] || 0;
                         const chgColor = chg >= 0 ? "#ef4444" : "#10b981";
-                        const amtLine = (data.klineSource === "qq" && amt === 0) ? "" : `<div style="color:#06b6d4;margin-top:2px">成交额: ${fmtAmount(amt)}</div>`;
+                        const amtLine = amt > 0 ? `<div style="color:#06b6d4;margin-top:2px">成交额: ${fmtAmount(amt)}</div>` : "";
                         return `
                             <div style="font-weight:600;margin-bottom:6px">${data.dates[idx]}</div>
                             <div>开盘: ${fmtNum(data.opens[idx])} &nbsp; 收盘: <b>${fmtNum(data.closes[idx])}</b></div>
