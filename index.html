@@ -880,12 +880,16 @@
                         if (rtStr && results[secid]) {
                             const rt = parseRealtimeStr(rtStr);
                             if (rt && rt.price > 0) {
+                                // A股/港股 parts[37] 单位是"万"，需 ×10000 转元
+                                // 美股 parts[37] 数值异常大（不是"万"单位），不可信，置0
+                                const isUS = (meta.qqCode || "").startsWith("us.");
+                                const rtAmount = isUS ? 0 : rt.amount * 10000;
                                 results[secid].realtime = {
                                     price: rt.price,
                                     change: rt.change,
                                     change_pct: rt.changePct,
                                     volume: rt.volume,
-                                    amount: rt.amount * 10000,
+                                    amount: rtAmount,
                                 };
                             }
                         }
