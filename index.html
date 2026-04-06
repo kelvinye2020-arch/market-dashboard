@@ -816,6 +816,47 @@
             return parsed;
         }
 
+        // ======== 静态 JSON fallback（日韩K线东方财富挂时使用） ========
+        let _fallbackCache = null;
+        async function fetchFallbackKline(secid) {
+            try {
+                if (!_fallbackCache) {
+                    const resp = await fetchWithTimeout("kline_fallback.json?_=" + Date.now(), {}, 5000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    _fallbackCache = await resp.json();
+                }
+                const entry = _fallbackCache[secid];
+                if (!entry || !entry.data || entry.data.length === 0) return null;
+                const meta = INDEX_META[secid];
+                const parsed = {
+                    name: meta.name, code: meta.short, secid: secid, short: meta.short,
+                    dates: [], opens: [], closes: [], highs: [], lows: [],
+                    volumes: [], amounts: [], changes: [], change_pcts: [],
+                    klineSource: "fallback",
+                };
+                let prevClose = 0;
+                for (const [date, close] of entry.data) {
+                    const change = prevClose > 0 ? close - prevClose : 0;
+                    const changePct = prevClose > 0 ? (change / prevClose * 100) : 0;
+                    parsed.dates.push(date);  // 保持 YYYY-MM-DD 格式
+                    parsed.opens.push(close);   // 只有收盘价，开高低都用收盘价填充
+                    parsed.closes.push(close);
+                    parsed.highs.push(close);
+                    parsed.lows.push(close);
+                    parsed.volumes.push(0);
+                    parsed.amounts.push(0);
+                    parsed.changes.push(change);
+                    parsed.change_pcts.push(changePct);
+                    prevClose = close;
+                }
+                console.log(`[FALLBACK] ${secid} 静态K线成功: ${parsed.dates.length}天`);
+                return parsed;
+            } catch (e) {
+                console.warn(`[FALLBACK] ${secid} 静态K线失败:`, e.message);
+                return null;
+            }
+        }
+
         // ======== 获取所有指数数据（双源并发 + 智能降级） ========
         async function fetchAllIndices(beginDate, endDate, klt) {
             const results = {};
@@ -889,8 +930,12 @@
                         parsed = await tryEM();
                     }
                 } else {
-                    // 日韩：只走东方财富
+                    // 日韩：东方财富优先，静态 JSON fallback
                     parsed = await tryEM();
+                    if (!parsed) {
+                        console.warn(`[EM] ${secid} 失败，降级静态JSON fallback`);
+                        parsed = await fetchFallbackKline(secid);
+                    }
                 }
 
                 results[secid] = parsed || emptyResult;
