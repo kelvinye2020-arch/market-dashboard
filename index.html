@@ -1102,17 +1102,6 @@
                     }
                 }
 
-                // 腾讯K线不含成交额，用实时行情的成交额补最后一天
-                for (const secid of availableIndices) {
-                    const d = allData[secid];
-                    if (d && d.klineSource === "qq" && d.realtime && d.realtime.amount > 0) {
-                        if (d.amounts && d.amounts.length > 0) {
-                            d.amounts[d.amounts.length - 1] = d.realtime.amount;
-                            console.log(`[FIX] ${secid} 腾讯K线最后一天成交额已用实时数据补充: ${d.realtime.amount}`);
-                        }
-                    }
-                }
-
                 // 输出可用指数状态
                 console.log("[INFO] 可用指数:", Array.from(availableIndices));
 
