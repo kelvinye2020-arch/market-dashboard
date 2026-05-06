@@ -651,24 +651,49 @@
             return null;
         }
 
-        // ======== CoinGecko 比特币实时价格 ========
+        // ======== 比特币实时价格（三源降级：CoinGecko → Coinbase → blockchain.info）========
         async function fetchCryptoRealtime() {
-            const url = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_last_updated_at=true&_=${Date.now()}`;
+            // 源1: CoinGecko（有24h涨跌幅）
             try {
-                const resp = await fetchWithTimeout(url, { mode: 'cors' }, 10000);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const json = await resp.json();
-                if (json && json.bitcoin) {
-                    const btc = json.bitcoin;
-                    return {
-                        price: btc.usd,
-                        changePct: btc.usd_24h_change || 0,
-                        volume: btc.usd_24h_vol || 0,
-                    };
+                const url1 = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&_=${Date.now()}`;
+                const resp1 = await fetchWithTimeout(url1, { mode: 'cors' }, 8000);
+                if (resp1.ok) {
+                    const json1 = await resp1.json();
+                    if (json1 && json1.bitcoin && json1.bitcoin.usd > 0) {
+                        console.log("[CoinGecko] BTC实时价格成功");
+                        return { price: json1.bitcoin.usd, changePct: json1.bitcoin.usd_24h_change || 0, volume: json1.bitcoin.usd_24h_vol || 0, source: "coingecko" };
+                    }
                 }
-            } catch (e) {
-                console.warn("[CoinGecko] 实时价格获取失败:", e.message);
-            }
+            } catch (e) { console.warn("[CoinGecko] 实时价格失败:", e.message); }
+
+            // 源2: Coinbase（只有现货价格，无涨跌幅）
+            try {
+                const url2 = `https://api.coinbase.com/v2/prices/BTC-USD/spot`;
+                const resp2 = await fetchWithTimeout(url2, { mode: 'cors' }, 8000);
+                if (resp2.ok) {
+                    const json2 = await resp2.json();
+                    if (json2 && json2.data && parseFloat(json2.data.amount) > 0) {
+                        const price = parseFloat(json2.data.amount);
+                        console.log("[Coinbase] BTC实时价格成功:", price);
+                        return { price, changePct: 0, volume: 0, source: "coinbase" };
+                    }
+                }
+            } catch (e) { console.warn("[Coinbase] 实时价格失败:", e.message); }
+
+            // 源3: blockchain.info（有多币种价格，无涨跌幅）
+            try {
+                const url3 = `https://blockchain.info/ticker`;
+                const resp3 = await fetchWithTimeout(url3, { mode: 'cors' }, 8000);
+                if (resp3.ok) {
+                    const json3 = await resp3.json();
+                    if (json3 && json3.USD && json3.USD.last > 0) {
+                        console.log("[blockchain.info] BTC实时价格成功:", json3.USD.last);
+                        return { price: json3.USD.last, changePct: 0, volume: 0, source: "blockchain" };
+                    }
+                }
+            } catch (e) { console.warn("[blockchain.info] 实时价格失败:", e.message); }
+
+            console.error("[BTC] 三源全部失败，隐藏BTC卡片");
             return null;
         }
 
@@ -1047,10 +1072,12 @@
                             return;
                         }
                     }
-                    console.warn("[CoinGecko] BTC K线无数据");
+                    console.warn("[CoinGecko] BTC K线无数据，隐藏BTC卡片");
+                    availableIndices.delete(secid);
                     results[secid] = emptyResult;
                 } catch (e) {
                     console.warn("[CoinGecko] BTC K线异常:", e.message);
+                    availableIndices.delete(secid);
                     results[secid] = emptyResult;
                 }
             })();
@@ -1114,7 +1141,7 @@
                 }
             });
 
-            // 2c. CoinGecko 比特币实时行情
+            // 2c. 比特币实时行情（三源降级）
             const cryptoRtPromise = (async () => {
                 try {
                     const rt = await fetchCryptoRealtime();
@@ -1132,12 +1159,14 @@
                                 amount: 0,
                             };
                         }
-                        console.log(`[CoinGecko] BTC 实时数据成功: $${rt.price}`);
+                        console.log(`[BTC] 实时数据成功(${rt.source}): $${rt.price}`);
                     } else {
-                        console.warn("[CoinGecko] BTC 实时数据无效");
+                        console.warn("[BTC] 实时数据全部失败，隐藏BTC卡片");
+                        availableIndices.delete("crypto_BTC");
                     }
                 } catch (e) {
-                    console.warn("[CoinGecko] BTC 实时获取异常:", e);
+                    console.warn("[BTC] 实时获取异常:", e);
+                    availableIndices.delete("crypto_BTC");
                 }
             })();
 
