@@ -651,22 +651,10 @@
             return null;
         }
 
-        // ======== 比特币实时价格（三源降级：CoinGecko → Coinbase → blockchain.info）========
+        // ======== 比特币实时价格（三源降级：Coinbase → blockchain.info → CoinGecko）========
+        // 优先级说明：Coinbase最稳定无限流；CoinGecko有涨跌幅但免费版限流严格放最后
         async function fetchCryptoRealtime() {
-            // 源1: CoinGecko（有24h涨跌幅）
-            try {
-                const url1 = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&_=${Date.now()}`;
-                const resp1 = await fetchWithTimeout(url1, { mode: 'cors' }, 8000);
-                if (resp1.ok) {
-                    const json1 = await resp1.json();
-                    if (json1 && json1.bitcoin && json1.bitcoin.usd > 0) {
-                        console.log("[CoinGecko] BTC实时价格成功");
-                        return { price: json1.bitcoin.usd, changePct: json1.bitcoin.usd_24h_change || 0, volume: json1.bitcoin.usd_24h_vol || 0, source: "coingecko" };
-                    }
-                }
-            } catch (e) { console.warn("[CoinGecko] 实时价格失败:", e.message); }
-
-            // 源2: Coinbase（只有现货价格，无涨跌幅）
+            // 源1: Coinbase（最稳定，只有现货价格，无涨跌幅）
             try {
                 const url2 = `https://api.coinbase.com/v2/prices/BTC-USD/spot`;
                 const resp2 = await fetchWithTimeout(url2, { mode: 'cors' }, 8000);
@@ -680,7 +668,7 @@
                 }
             } catch (e) { console.warn("[Coinbase] 实时价格失败:", e.message); }
 
-            // 源3: blockchain.info（有多币种价格，无涨跌幅）
+            // 源2: blockchain.info（有多币种价格，无涨跌幅）
             try {
                 const url3 = `https://blockchain.info/ticker`;
                 const resp3 = await fetchWithTimeout(url3, { mode: 'cors' }, 8000);
@@ -693,24 +681,61 @@
                 }
             } catch (e) { console.warn("[blockchain.info] 实时价格失败:", e.message); }
 
+            // 源3: CoinGecko（有24h涨跌幅，但限流严格，放最后保底）
+            try {
+                const url1 = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&_=${Date.now()}`;
+                const resp1 = await fetchWithTimeout(url1, { mode: 'cors' }, 8000);
+                if (resp1.ok) {
+                    const json1 = await resp1.json();
+                    if (json1 && json1.bitcoin && json1.bitcoin.usd > 0) {
+                        console.log("[CoinGecko] BTC实时价格成功");
+                        return { price: json1.bitcoin.usd, changePct: json1.bitcoin.usd_24h_change || 0, volume: json1.bitcoin.usd_24h_vol || 0, source: "coingecko" };
+                    }
+                }
+            } catch (e) { console.warn("[CoinGecko] 实时价格失败:", e.message); }
+
             console.error("[BTC] 三源全部失败，隐藏BTC卡片");
             return null;
         }
 
-        // ======== CoinGecko 比特币 OHLC K线 ========
+        // ======== 比特币K线（优先静态JSON → CoinGecko API备用）========
         async function fetchCryptoKline(days) {
-            // days=30 → 约每2天一根K线; days=90 → 约每2天; days=180/365 → 每周
-            const url = `https://api.coingecko.com/api/v3/coins/bitcoin/ohlc?vs_currency=usd&days=${days}&_=${Date.now()}`;
+            // 源1: 本地静态文件（Python脚本每日更新，零限流零延迟）
             try {
-                const resp = await fetchWithTimeout(url, { mode: 'cors' }, 10000);
+                const jsonUrl = `btc_kline.json?_=${Math.floor(Date.now()/60000)}`; // 1分钟缓存
+                const resp = await fetchWithTimeout(jsonUrl, {}, 5000);
+                if (resp.ok) {
+                    const json = await resp.json();
+                    if (json && json.dates && json.dates.length > 0) {
+                        console.log(`[BTC] 静态K线加载成功, ${json.dates.length}天, 更新时间=${json.updated}`);
+                        // 转换为CoinGecko OHLC格式 [[ts, open, high, low, close], ...]
+                        const ohlcArr = [];
+                        for (let i = 0; i < json.dates.length; i++) {
+                            const ts = new Date(json.dates[i]).getTime();
+                            ohlcArr.push([ts, json.opens[i], json.highs[i], json.lows[i], json.closes[i]]);
+                        }
+                        return ohlcArr;
+                    }
+                }
+            } catch (e) { console.warn("[BTC] 静态K线文件读取失败:", e.message); }
+
+            // 源2: CoinGecko OHLC API（有限流风险，作为备用）
+            const url = `https://api.coingecko.com/api/v3/coins/bitcoin/ohlc?vs_currency=usd&days=${days}`;
+            try {
+                await new Promise(r => setTimeout(r, 2000)); // 延迟2s避免和Coinbase并发
+                const resp = await fetchWithTimeout(url + `&_=${Date.now()}`, { mode: 'cors' }, 15000);
+                if (resp.status === 429) {
+                    console.warn("[CoinGecko] OHLC K线 429限流");
+                    return null;
+                }
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const json = await resp.json();
                 if (Array.isArray(json) && json.length > 0) {
-                    return json; // [[timestamp, open, high, low, close], ...]
+                    console.log(`[CoinGecko] OHLC K线成功, ${json.length}条`);
+                    return json;
                 }
-            } catch (e) {
-                console.warn("[CoinGecko] OHLC K线获取失败:", e.message);
-            }
+            } catch (e) { console.warn("[CoinGecko] OHLC K线获取失败:", e.message); }
+
             return null;
         }
 
@@ -1030,6 +1055,8 @@
                     volumes: [], amounts: [], changes: [], change_pcts: [],
                     noKlineData: true,
                 };
+                // 预先初始化，确保实时数据注入时 results[secid] 已存在
+                results[secid] = emptyResult;
                 try {
                     // CoinGecko OHLC 免费 API: days 最大365
                     const cgDays = Math.min(365, spanDays);
@@ -1072,12 +1099,12 @@
                             return;
                         }
                     }
-                    console.warn("[CoinGecko] BTC K线无数据，隐藏BTC卡片");
-                    availableIndices.delete(secid);
+                    console.warn("[CoinGecko] BTC K线无数据，但保留BTC卡片（仅显示实时价格）");
+                    // 不删除 availableIndices，让BTC卡片仍然显示（K线区域为空）
                     results[secid] = emptyResult;
                 } catch (e) {
                     console.warn("[CoinGecko] BTC K线异常:", e.message);
-                    availableIndices.delete(secid);
+                    // 同样不隐藏，保留卡片
                     results[secid] = emptyResult;
                 }
             })();
@@ -1172,6 +1199,23 @@
 
             // K线 + 实时行情全部并发等待
             await Promise.all([...klinePromises, cryptoKlinePromise, qqRtPromise, ...emRtPromises, cryptoRtPromise]);
+
+            // 后处理：如果BTC实时数据来自Coinbase（无涨跌幅），用K线最近一天的close作为prevClose计算涨跌幅
+            if (results["crypto_BTC"] && results["crypto_BTC"].realtime && results["crypto_BTC"].realtime.change_pct === 0) {
+                const closes = results["crypto_BTC"].closes;
+                if (closes && closes.length >= 2) {
+                    // 用倒数第二天的close作为prevClose（最后一天可能是今天不完整的）
+                    const prevClose = closes[closes.length - 2];
+                    const curPrice = results["crypto_BTC"].realtime.price;
+                    if (prevClose > 0 && curPrice > 0) {
+                        const change = curPrice - prevClose;
+                        const changePct = (change / prevClose) * 100;
+                        results["crypto_BTC"].realtime.change = change;
+                        results["crypto_BTC"].realtime.change_pct = changePct;
+                        console.log(`[BTC] 涨跌幅补算: prevClose=${prevClose}, change=${change.toFixed(2)}, pct=${changePct.toFixed(2)}%`);
+                    }
+                }
+            }
 
             return results;
         }

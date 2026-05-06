@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>BTC 数据源连通性测试</title>
+<style>
+body { font-family: system-ui; background: #1a1a2e; color: #eee; padding: 40px; }
+h1 { color: #f7931a; }
+.test-item { margin: 20px 0; padding: 16px; background: #16213e; border-radius: 8px; }
+.status { font-weight: bold; margin-left: 12px; }
+.ok { color: #2dd284; }
+.fail { color: #f0544c; }
+.pending { color: #f5a623; }
+pre { background: #0f3460; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>🔍 BTC 数据源连通性测试</h1>
+<p>测试时间：<span id="time"></span></p>
+<p>此页面模拟看板实际的 fetch 请求，验证浏览器环境下各数据源是否可达。</p>
+
+<div class="test-item" id="t1">
+  <strong>1. CoinGecko</strong> <code>api.coingecko.com/api/v3/simple/price</code>
+  <span class="status pending" id="s1">⏳ 测试中...</span>
+  <pre id="r1"></pre>
+</div>
+
+<div class="test-item" id="t2">
+  <strong>2. Coinbase</strong> <code>api.coinbase.com/v2/prices/BTC-USD/spot</code>
+  <span class="status pending" id="s2">⏳ 测试中...</span>
+  <pre id="r2"></pre>
+</div>
+
+<div class="test-item" id="t3">
+  <strong>3. blockchain.info</strong> <code>blockchain.info/ticker</code>
+  <span class="status pending" id="s3">⏳ 测试中...</span>
+  <pre id="r3"></pre>
+</div>
+
+<div class="test-item" id="t4">
+  <strong>4. CoinGecko OHLC (K线)</strong> <code>api.coingecko.com/api/v3/coins/bitcoin/ohlc?days=30</code>
+  <span class="status pending" id="s4">⏳ 测试中...</span>
+  <pre id="r4"></pre>
+</div>
+
+<h2 style="margin-top:40px">📋 结论</h2>
+<pre id="conclusion">等待测试完成...</pre>
+
+<script>
+document.getElementById('time').textContent = new Date().toLocaleString();
+
+const tests = [
+  { id: 1, name: 'CoinGecko Price', url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true' },
+  { id: 2, name: 'Coinbase Spot', url: 'https://api.coinbase.com/v2/prices/BTC-USD/spot' },
+  { id: 3, name: 'blockchain.info', url: 'https://blockchain.info/ticker' },
+  { id: 4, name: 'CoinGecko OHLC', url: 'https://api.coingecko.com/api/v3/coins/bitcoin/ohlc?vs_currency=usd&days=30' },
+];
+
+const results = {};
+
+async function runTest(t) {
+  const statusEl = document.getElementById('s' + t.id);
+  const resultEl = document.getElementById('r' + t.id);
+  const start = Date.now();
+  
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    
+    const resp = await fetch(t.url, { signal: controller.signal });
+    clearTimeout(timeout);
+    
+    const elapsed = Date.now() - start;
+    
+    if (!resp.ok) {
+      statusEl.textContent = `❌ HTTP ${resp.status}`;
+      statusEl.className = 'status fail';
+      resultEl.textContent = `HTTP ${resp.status} ${resp.statusText}\n耗时: ${elapsed}ms`;
+      results[t.name] = { ok: false, reason: `HTTP ${resp.status}`, ms: elapsed };
+      return;
+    }
+    
+    const text = await resp.text();
+    const data = JSON.parse(text);
+    
+    // 提取价格
+    let price = '?';
+    if (t.id === 1) price = data?.bitcoin?.usd;
+    else if (t.id === 2) price = data?.data?.amount;
+    else if (t.id === 3) price = data?.USD?.last;
+    else if (t.id === 4) price = `${data.length} 条K线数据`;
+    
+    statusEl.textContent = `✅ 成功 (${elapsed}ms)`;
+    statusEl.className = 'status ok';
+    resultEl.textContent = `价格/数据: ${price}\n耗时: ${elapsed}ms\n响应前100字符: ${text.substring(0, 100)}...`;
+    results[t.name] = { ok: true, price, ms: elapsed };
+    
+  } catch (err) {
+    const elapsed = Date.now() - start;
+    statusEl.textContent = `❌ 失败`;
+    statusEl.className = 'status fail';
+    resultEl.textContent = `错误: ${err.message}\n耗时: ${elapsed}ms\n\n可能原因:\n- 网络超时 (>10s)\n- DNS 解析失败\n- 被防火墙/代理拦截\n- CORS 被浏览器阻止`;
+    results[t.name] = { ok: false, reason: err.message, ms: elapsed };
+  }
+}
+
+Promise.all(tests.map(runTest)).then(() => {
+  const okCount = Object.values(results).filter(r => r.ok).length;
+  const lines = Object.entries(results).map(([name, r]) => 
+    `${r.ok ? '✅' : '❌'} ${name}: ${r.ok ? `成功, ${r.price}, ${r.ms}ms` : `失败 - ${r.reason}, ${r.ms}ms`}`
+  );
+  
+  let conclusion = lines.join('\n') + '\n\n';
+  if (okCount === 0) {
+    conclusion += '⚠️ 所有源均不可达！确认是网络环境封锁了加密货币相关域名。\n建议：去掉BTC，或寻找平替指标。';
+  } else if (okCount < 4) {
+    conclusion += `⚠️ ${okCount}/4 个源可用。部分封锁，可使用可达的源。`;
+  } else {
+    conclusion += '🎉 所有源均可达！BTC数据应该能正常显示。\n如果看板仍不显示，问题可能在代码逻辑而非网络。';
+  }
+  
+  document.getElementById('conclusion').textContent = conclusion;
+});
+</script>
+</body>
+</html>
