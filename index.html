@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>全球指数看板 | Global Index Dashboard</title>
+    <title>全球市场看板 | Global Market Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <style>
         :root {
@@ -202,7 +202,7 @@
         /* ===== 指数卡片网格 ===== */
         .index-cards {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(5, 1fr);
             gap: 14px; margin-bottom: 20px;
         }
 
@@ -364,6 +364,9 @@
         .footer a { color: var(--accent-blue); text-decoration: none; }
 
         /* ===== 响应式 ===== */
+        @media (max-width: 1400px) {
+            .index-cards { grid-template-columns: repeat(4, 1fr); }
+        }
         @media (max-width: 1200px) {
             .index-cards { grid-template-columns: repeat(3, 1fr); }
             .stats-row { grid-template-columns: repeat(3, 1fr); }
@@ -387,7 +390,7 @@
     <div class="loading-overlay" id="loadingOverlay">
         <div class="loading-ring"></div>
         <div class="loading-text">正在获取最新行情数据...</div>
-        <div class="loading-sub">东方财富 + 腾讯财经（双源智能降级）</div>
+        <div class="loading-sub">东方财富 + 腾讯财经 + CoinGecko（三源智能降级）</div>
     </div>
 
     <!-- 错误提示 -->
@@ -397,7 +400,7 @@
     <header class="header">
         <div class="header-left">
             <div class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></div>
-            <div><h1>全球指数看板 <span style="font-size:13px;font-weight:400;color:var(--text-muted);margin-left:4px;">Global Index Dashboard</span></h1></div>
+            <div><h1>全球市场看板 <span style="font-size:13px;font-weight:400;color:var(--text-muted);margin-left:4px;">Global Market Dashboard</span></h1></div>
         </div>
         <div class="header-right">
             <div class="status-badge">
@@ -484,15 +487,16 @@
 
     <!-- 底部来源标识 -->
     <footer class="footer">
-        数据来源：东方财富 + 腾讯财经（双源智能降级） &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v4.2
+        数据来源：东方财富 + 腾讯财经 + CoinGecko（三源智能降级） &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v4.3
     </footer>
 
     <script>
         // ============================================================
-        //  全球指数智能看板 v4.2 — 双源智能降级架构
+        //  全球指数智能看板 v4.3 — 三源智能降级架构
         //  K线: A/港股→东方财富优先（有成交额），腾讯备用
         //       美股→腾讯优先，东方财富备用；日韩→只走东方财富
-        //  实时: A/港/美股→腾讯财经，日韩→东方财富
+        //       布伦特原油→东方财富；比特币→CoinGecko
+        //  实时: A/港/美股→腾讯财经，日韩/原油→东方财富，BTC→CoinGecko
         //  所有请求并发执行 + 8s 超时，首屏速度优化
         // ============================================================
 
@@ -520,10 +524,12 @@
             "em_KS11":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", qqKline: null,        qqCode: null,        emSecid: "100.KS11" },
             "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#7c3aed", qqKline: "us.IXIC",   qqCode: "us.IXIC",   emSecid: "100.NDX" },
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX" },
+            "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: null,        emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true },
+            "crypto_BTC":{ name: "比特币",       short: "BTC",    color: "#f97316", qqKline: null,        qqCode: null,        emSecid: null,         unit: "USD",     isCrypto: true },
         };
 
-        // 8个指数全部加入显示队列
-        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX"];
+        // 10个品种全部加入显示队列
+        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "crypto_BTC"];
 
         // 记录哪些指数数据可用（运行时检测）
         let availableIndices = new Set(INDEX_ORDER);
@@ -643,6 +649,89 @@
                 console.warn(`[EM] 实时行情获取失败 ${emSecid}:`, e.message);
             }
             return null;
+        }
+
+        // ======== CoinGecko 比特币实时价格 ========
+        async function fetchCryptoRealtime() {
+            const url = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_last_updated_at=true&_=${Date.now()}`;
+            try {
+                const resp = await fetchWithTimeout(url, { mode: 'cors' }, 10000);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const json = await resp.json();
+                if (json && json.bitcoin) {
+                    const btc = json.bitcoin;
+                    return {
+                        price: btc.usd,
+                        changePct: btc.usd_24h_change || 0,
+                        volume: btc.usd_24h_vol || 0,
+                    };
+                }
+            } catch (e) {
+                console.warn("[CoinGecko] 实时价格获取失败:", e.message);
+            }
+            return null;
+        }
+
+        // ======== CoinGecko 比特币 OHLC K线 ========
+        async function fetchCryptoKline(days) {
+            // days=30 → 约每2天一根K线; days=90 → 约每2天; days=180/365 → 每周
+            const url = `https://api.coingecko.com/api/v3/coins/bitcoin/ohlc?vs_currency=usd&days=${days}&_=${Date.now()}`;
+            try {
+                const resp = await fetchWithTimeout(url, { mode: 'cors' }, 10000);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const json = await resp.json();
+                if (Array.isArray(json) && json.length > 0) {
+                    return json; // [[timestamp, open, high, low, close], ...]
+                }
+            } catch (e) {
+                console.warn("[CoinGecko] OHLC K线获取失败:", e.message);
+            }
+            return null;
+        }
+
+        // 解析 CoinGecko OHLC 数据为标准格式
+        function parseCryptoKlineData(ohlcData) {
+            if (!ohlcData || ohlcData.length === 0) return null;
+            const meta = INDEX_META["crypto_BTC"];
+            const parsed = {
+                name: meta.name, code: meta.short, secid: "crypto_BTC", short: meta.short,
+                dates: [], opens: [], closes: [], highs: [], lows: [],
+                volumes: [], amounts: [], changes: [], change_pcts: [],
+                klineSource: "coingecko",
+            };
+
+            // CoinGecko OHLC 可能一天有多条（4h级别），按日聚合
+            const dayMap = {};
+            for (const item of ohlcData) {
+                const ts = item[0];
+                const dateStr = new Date(ts).toISOString().slice(0, 10);
+                if (!dayMap[dateStr]) {
+                    dayMap[dateStr] = { open: item[1], high: item[2], low: item[3], close: item[4] };
+                } else {
+                    dayMap[dateStr].high = Math.max(dayMap[dateStr].high, item[2]);
+                    dayMap[dateStr].low = Math.min(dayMap[dateStr].low, item[3]);
+                    dayMap[dateStr].close = item[4]; // 最后一条的 close
+                }
+            }
+
+            const sortedDates = Object.keys(dayMap).sort();
+            let prevClose = 0;
+            for (const date of sortedDates) {
+                const d = dayMap[date];
+                const change = prevClose > 0 ? d.close - prevClose : 0;
+                const changePct = prevClose > 0 ? (change / prevClose * 100) : 0;
+                parsed.dates.push(date);
+                parsed.opens.push(d.open);
+                parsed.closes.push(d.close);
+                parsed.highs.push(d.high);
+                parsed.lows.push(d.low);
+                parsed.volumes.push(0);
+                parsed.amounts.push(0);
+                parsed.changes.push(change);
+                parsed.change_pcts.push(changePct);
+                prevClose = d.close;
+            }
+            return parsed;
         }
 
         // ======== 东方财富K线历史数据（用于日韩指数）========
@@ -829,8 +918,13 @@
             const qqBegin = fmtQQDate(beginDate);
             const qqEnd = fmtQQDate(endDate);
 
-            // 1. K线历史数据：preferEM=true的指数（A/港股）东方财富优先（有成交额），其余腾讯优先
-            const klinePromises = INDEX_ORDER.map(async (secid) => {
+            // 计算时间跨度天数（用于 CoinGecko days 参数）
+            const beginDt = new Date(`${beginDate.slice(0,4)}-${beginDate.slice(4,6)}-${beginDate.slice(6,8)}`);
+            const endDt = new Date(`${endDate.slice(0,4)}-${endDate.slice(4,6)}-${endDate.slice(6,8)}`);
+            const spanDays = Math.max(7, Math.ceil((endDt - beginDt) / 86400000));
+
+            // 1. K线历史数据
+            const klinePromises = INDEX_ORDER.filter(id => !INDEX_META[id].isCrypto).map(async (secid) => {
                 const meta = INDEX_META[secid];
                 const emptyResult = {
                     name: meta.name, code: meta.short, secid: secid, short: meta.short,
@@ -843,6 +937,7 @@
 
                 // 辅助函数：尝试东方财富K线
                 const tryEM = async () => {
+                    if (!meta.emSecid) return null;
                     try {
                         const klines = await fetchEMKline(meta.emSecid, klt, beginDate, endDate);
                         const p = parseEMKlineData(klines, secid);
@@ -889,19 +984,80 @@
                         parsed = await tryEM();
                     }
                 } else {
-                    // 日韩：只走东方财富，失败则隐藏
+                    // 日韩/商品：只走东方财富，失败则隐藏
                     parsed = await tryEM();
                     if (!parsed) {
-                        console.warn(`[EM] ${secid} K线失败，隐藏该指数`);
+                        console.warn(`[EM] ${secid} K线失败，隐藏该品种`);
                         availableIndices.delete(secid);
                     }
                 }
 
                 results[secid] = parsed || emptyResult;
             });
+
+            // 1b. 比特币K线（CoinGecko 独立路径）
+            const cryptoKlinePromise = (async () => {
+                const secid = "crypto_BTC";
+                const meta = INDEX_META[secid];
+                const emptyResult = {
+                    name: meta.name, code: meta.short, secid: secid, short: meta.short,
+                    dates: [], opens: [], closes: [], highs: [], lows: [],
+                    volumes: [], amounts: [], changes: [], change_pcts: [],
+                    noKlineData: true,
+                };
+                try {
+                    // CoinGecko OHLC 免费 API: days 最大365
+                    const cgDays = Math.min(365, spanDays);
+                    const ohlc = await fetchCryptoKline(cgDays);
+                    const parsed = parseCryptoKlineData(ohlc);
+                    if (parsed && parsed.dates.length > 0) {
+                        // 按日期过滤，只保留 beginDate~endDate 范围内的数据
+                        const beginISO = `${beginDate.slice(0,4)}-${beginDate.slice(4,6)}-${beginDate.slice(6,8)}`;
+                        const endISO = `${endDate.slice(0,4)}-${endDate.slice(4,6)}-${endDate.slice(6,8)}`;
+                        const filteredIdx = [];
+                        parsed.dates.forEach((d, i) => {
+                            if (d >= beginISO && d <= endISO) filteredIdx.push(i);
+                        });
+                        if (filteredIdx.length > 0) {
+                            const filtered = {
+                                name: parsed.name, code: parsed.code, secid: parsed.secid, short: parsed.short,
+                                dates: filteredIdx.map(i => parsed.dates[i]),
+                                opens: filteredIdx.map(i => parsed.opens[i]),
+                                closes: filteredIdx.map(i => parsed.closes[i]),
+                                highs: filteredIdx.map(i => parsed.highs[i]),
+                                lows: filteredIdx.map(i => parsed.lows[i]),
+                                volumes: filteredIdx.map(i => parsed.volumes[i]),
+                                amounts: filteredIdx.map(i => parsed.amounts[i]),
+                                changes: [], change_pcts: [],
+                                klineSource: "coingecko",
+                            };
+                            // 重算涨跌
+                            let prev = filtered.closes[0];
+                            for (let i = 0; i < filtered.closes.length; i++) {
+                                if (i === 0) { filtered.changes.push(0); filtered.change_pcts.push(0); }
+                                else {
+                                    const chg = filtered.closes[i] - prev;
+                                    filtered.changes.push(chg);
+                                    filtered.change_pcts.push(prev > 0 ? chg / prev * 100 : 0);
+                                }
+                                prev = filtered.closes[i];
+                            }
+                            results[secid] = filtered;
+                            console.log(`[CoinGecko] BTC K线成功: ${filtered.dates.length}天`);
+                            return;
+                        }
+                    }
+                    console.warn("[CoinGecko] BTC K线无数据");
+                    results[secid] = emptyResult;
+                } catch (e) {
+                    console.warn("[CoinGecko] BTC K线异常:", e.message);
+                    results[secid] = emptyResult;
+                }
+            })();
+
             // 2. 实时行情（与K线并发执行，不串行等待）
             const qqRtIndices = INDEX_ORDER.filter(id => INDEX_META[id].qqCode);
-            const emOnlyIndices = INDEX_ORDER.filter(id => !INDEX_META[id].qqCode);
+            const emOnlyIndices = INDEX_ORDER.filter(id => !INDEX_META[id].qqCode && !INDEX_META[id].isCrypto && INDEX_META[id].emSecid);
 
             // 2a. 腾讯实时行情（A股、港股、美股 — 6个指数）
             const qqRtPromise = (async () => {
@@ -932,7 +1088,7 @@
                 }
             })();
 
-            // 2b. 东方财富实时行情（日韩指数 — 腾讯不支持）
+            // 2b. 东方财富实时行情（日韩指数 + 布伦特原油）
             const emRtPromises = emOnlyIndices.map(async (secid) => {
                 try {
                     const meta = INDEX_META[secid];
@@ -958,8 +1114,35 @@
                 }
             });
 
+            // 2c. CoinGecko 比特币实时行情
+            const cryptoRtPromise = (async () => {
+                try {
+                    const rt = await fetchCryptoRealtime();
+                    if (rt && rt.price > 0) {
+                        // 从24h涨跌幅反算涨跌额: prevPrice = price / (1 + pct/100), change = price - prevPrice
+                        const pct = rt.changePct || 0;
+                        const prevPrice = rt.price / (1 + pct / 100);
+                        const changeAmt = rt.price - prevPrice;
+                        if (results["crypto_BTC"]) {
+                            results["crypto_BTC"].realtime = {
+                                price: rt.price,
+                                change: changeAmt,
+                                change_pct: pct,
+                                volume: rt.volume,
+                                amount: 0,
+                            };
+                        }
+                        console.log(`[CoinGecko] BTC 实时数据成功: $${rt.price}`);
+                    } else {
+                        console.warn("[CoinGecko] BTC 实时数据无效");
+                    }
+                } catch (e) {
+                    console.warn("[CoinGecko] BTC 实时获取异常:", e);
+                }
+            })();
+
             // K线 + 实时行情全部并发等待
-            await Promise.all([...klinePromises, qqRtPromise, ...emRtPromises]);
+            await Promise.all([...klinePromises, cryptoKlinePromise, qqRtPromise, ...emRtPromises, cryptoRtPromise]);
 
             return results;
         }
@@ -1166,16 +1349,21 @@
                 card.className = `index-card ${secid === activeSecid ? "active" : ""}`;
                 card.onclick = () => selectIndex(secid);
 
+                // 单位标注（商品/加密货币）
+                const unitBadge = meta.unit ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:4px">${meta.unit}</span>` : "";
+                // 价格格式化：比特币用整数，其他保留小数
+                const priceStr = meta.isCrypto ? "$" + Math.round(displayPrice).toLocaleString("en-US") : fmtNum(displayPrice);
+
                 card.innerHTML = `
                     <div class="card-header">
                         <span class="card-name">${meta.name}</span>
                         <span class="card-code">${meta.short}</span>
                     </div>
-                    <div class="card-price ${colorClass}">${fmtNum(displayPrice)}</div>
+                    <div class="card-price ${colorClass}">${priceStr}${unitBadge}</div>
                     <div class="card-change">
                         <span class="${colorClass}">
                             ${isUp ? "&#9650;" : dayChangePct < 0 ? "&#9660;" : "&#9644;"}
-                            ${fmtNum(Math.abs(dayChange))}
+                            ${meta.isCrypto ? "$" + Math.abs(dayChange).toFixed(0) : fmtNum(Math.abs(dayChange))}
                         </span>
                         <span class="${colorClass}">
                             ${isUp ? "+" : ""}${dayChangePct.toFixed(2)}%
