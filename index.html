@@ -103,6 +103,40 @@
         .btn-refresh.loading .spinner { display: inline-block; }
         @keyframes spin { to { transform: rotate(360deg); } }
 
+        /* ===== 自动刷新按钮 ===== */
+        .btn-auto-refresh {
+            padding: 7px 14px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 12px; font-weight: 500;
+            cursor: pointer; transition: all 0.3s;
+            display: flex; align-items: center; gap: 5px;
+        }
+        .btn-auto-refresh:hover { border-color: var(--accent-blue); color: var(--text-primary); }
+        .btn-auto-refresh.active {
+            background: rgba(59, 130, 246, 0.15);
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+        }
+        .btn-auto-refresh .auto-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: var(--text-muted); transition: background 0.3s;
+        }
+        .btn-auto-refresh.active .auto-dot {
+            background: #10b981;
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .auto-countdown {
+            font-size: 11px; color: var(--text-muted);
+            min-width: 28px; text-align: center;
+        }
+
         /* ===== 时间选择器工具栏 ===== */
         .toolbar {
             background: var(--bg-secondary);
@@ -408,6 +442,11 @@
                 <span>实时</span>
             </div>
             <div class="update-time" id="updateTime">等待更新...</div>
+            <button class="btn-auto-refresh" id="btnAutoRefresh" onclick="toggleAutoRefresh()">
+                <span class="auto-dot"></span>
+                <span>自动</span>
+                <span class="auto-countdown" id="autoCountdown"></span>
+            </button>
             <button class="btn-refresh" id="btnRefresh" onclick="refreshData()">
                 <span class="spinner"></span>
                 <span>刷新数据</span>
@@ -487,12 +526,12 @@
 
     <!-- 底部来源标识 -->
     <footer class="footer">
-        数据来源：东方财富 + 腾讯财经 + CoinGecko（三源智能降级） &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v4.3
+        数据来源：东方财富 + 腾讯财经 + CoinGecko（三源智能降级） &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v4.5
     </footer>
 
     <script>
         // ============================================================
-        //  全球指数智能看板 v4.3 — 三源智能降级架构
+        //  全球指数智能看板 v4.5 — 三源智能降级 + 自动刷新
         //  K线: A/港股→东方财富优先（有成交额），腾讯备用
         //       美股→腾讯优先，东方财富备用；日韩→只走东方财富
         //       布伦特原油→东方财富；比特币→CoinGecko
@@ -525,11 +564,13 @@
             "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#7c3aed", qqKline: "us.IXIC",   qqCode: "us.IXIC",   emSecid: "100.NDX" },
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX" },
             "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: null,        emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true },
+            "em_AU9999": { name: "黄金AU9999",   short: "AU9999", color: "#fbbf24", qqKline: null,        qqCode: null,        emSecid: "118.AU9999", unit: "元/克",   isCommodity: true },
+            "em_BOND":   { name: "中证全债指数", short: "全债",   color: "#a78bfa", qqKline: null,        qqCode: null,        emSecid: "0.H11001",   isBond: true },
             "crypto_BTC":{ name: "比特币",       short: "BTC",    color: "#f97316", qqKline: null,        qqCode: null,        emSecid: null,         unit: "USD",     isCrypto: true },
         };
 
-        // 10个品种全部加入显示队列
-        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "crypto_BTC"];
+        // 12个品种全部加入显示队列
+        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "em_AU9999", "em_BOND", "crypto_BTC"];
 
         // 记录哪些指数数据可用（运行时检测）
         let availableIndices = new Set(INDEX_ORDER);
@@ -1372,6 +1413,137 @@
             } finally {
                 btn.classList.remove("loading");
                 showLoading(false);
+            }
+        }
+
+        // ======== 自动刷新（仅实时行情，不重拉K线）========
+        let autoRefreshEnabled = false;
+        let autoRefreshTimer = null;
+        let countdownTimer = null;
+        let countdownSec = 0;
+        const AUTO_REFRESH_INTERVAL = 120; // 秒
+
+        function toggleAutoRefresh() {
+            autoRefreshEnabled = !autoRefreshEnabled;
+            const btn = document.getElementById("btnAutoRefresh");
+            const cdEl = document.getElementById("autoCountdown");
+            if (autoRefreshEnabled) {
+                btn.classList.add("active");
+                startAutoRefreshCycle();
+            } else {
+                btn.classList.remove("active");
+                clearInterval(autoRefreshTimer);
+                clearInterval(countdownTimer);
+                autoRefreshTimer = null;
+                countdownTimer = null;
+                cdEl.textContent = "";
+            }
+        }
+
+        function startAutoRefreshCycle() {
+            countdownSec = AUTO_REFRESH_INTERVAL;
+            updateCountdownDisplay();
+            // 倒计时每秒更新
+            countdownTimer = setInterval(() => {
+                countdownSec--;
+                if (countdownSec <= 0) countdownSec = AUTO_REFRESH_INTERVAL;
+                updateCountdownDisplay();
+            }, 1000);
+            // 实际刷新
+            autoRefreshTimer = setInterval(() => {
+                if (autoRefreshEnabled) refreshRealtimeOnly();
+                countdownSec = AUTO_REFRESH_INTERVAL;
+            }, AUTO_REFRESH_INTERVAL * 1000);
+        }
+
+        function updateCountdownDisplay() {
+            const cdEl = document.getElementById("autoCountdown");
+            if (!autoRefreshEnabled) { cdEl.textContent = ""; return; }
+            cdEl.textContent = countdownSec + "s";
+        }
+
+        // 轻量刷新：只拉实时行情 → 更新卡片价格/涨跌
+        async function refreshRealtimeOnly() {
+            console.log("[AutoRefresh] 拉取实时行情...");
+            try {
+                // 腾讯实时（A股/港股/美股）
+                const qqRtIndices = INDEX_ORDER.filter(id => INDEX_META[id].qqCode && availableIndices.has(id));
+                if (qqRtIndices.length > 0) {
+                    const rtCodes = qqRtIndices.map(s => INDEX_META[s].qqCode);
+                    const rtResults = await fetchQQRealtime(rtCodes);
+                    qqRtIndices.forEach(secid => {
+                        const meta = INDEX_META[secid];
+                        const rtStr = rtResults[meta.qqCode];
+                        if (rtStr && allData[secid]) {
+                            const rt = parseRealtimeStr(rtStr);
+                            if (rt && rt.price > 0) {
+                                const isUS = (meta.qqCode || "").startsWith("us.");
+                                const rtAmount = isUS ? 0 : rt.amount * 10000;
+                                allData[secid].realtime = {
+                                    price: rt.price,
+                                    change: rt.change,
+                                    change_pct: rt.changePct,
+                                    volume: rt.volume,
+                                    amount: rtAmount,
+                                };
+                            }
+                        }
+                    });
+                }
+
+                // 东方财富实时（日韩/原油）
+                const emOnlyIndices = INDEX_ORDER.filter(id => !INDEX_META[id].qqCode && !INDEX_META[id].isCrypto && INDEX_META[id].emSecid && availableIndices.has(id));
+                await Promise.all(emOnlyIndices.map(async (secid) => {
+                    try {
+                        const meta = INDEX_META[secid];
+                        const rt = await fetchEMRealtime(meta.emSecid);
+                        if (rt && rt.price > 0 && allData[secid]) {
+                            allData[secid].realtime = {
+                                price: rt.price,
+                                change: rt.change,
+                                change_pct: rt.changePct,
+                                volume: rt.volume,
+                                amount: rt.amount,
+                            };
+                        }
+                    } catch (e) { /* 静默 */ }
+                }));
+
+                // 比特币实时（Coinbase优先）
+                if (availableIndices.has("crypto_BTC")) {
+                    const rt = await fetchCryptoRealtime();
+                    if (rt && rt.price > 0 && allData["crypto_BTC"]) {
+                        const pct = rt.changePct || 0;
+                        const prevPrice = rt.price / (1 + pct / 100);
+                        const changeAmt = rt.price - prevPrice;
+                        allData["crypto_BTC"].realtime = {
+                            price: rt.price,
+                            change: changeAmt,
+                            change_pct: pct,
+                            volume: rt.volume,
+                            amount: 0,
+                        };
+                        // Coinbase无涨跌幅，用K线补算
+                        if (pct === 0) {
+                            const closes = allData["crypto_BTC"].closes;
+                            if (closes && closes.length >= 2) {
+                                const prevClose = closes[closes.length - 2];
+                                if (prevClose > 0) {
+                                    const chg = rt.price - prevClose;
+                                    allData["crypto_BTC"].realtime.change = chg;
+                                    allData["crypto_BTC"].realtime.change_pct = (chg / prevClose) * 100;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 重新渲染卡片（轻量，不动图表）
+                renderCards();
+                updateTimeDisplay();
+                console.log("[AutoRefresh] 完成");
+            } catch (e) {
+                console.warn("[AutoRefresh] 失败:", e.message);
             }
         }
 

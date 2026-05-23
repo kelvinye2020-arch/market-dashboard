@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>对比图品种可选 - Demo</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: #1a2235;
+            --bg-card-hover: #1f2a40;
+            --border: #2a3654;
+            --text-primary: #e5e7eb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --accent-blue: #3b82f6;
+            --accent-cyan: #06b6d4;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 24px 32px;
+        }
+
+        h1 {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 24px;
+        }
+
+        /* ===== 控制区 ===== */
+        .controls {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 18px;
+        }
+
+        .controls-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .controls-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .controls-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* 分组预设 */
+        .presets {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+
+        .preset-btn {
+            padding: 5px 14px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .preset-btn:hover {
+            border-color: var(--accent-blue);
+            color: var(--text-primary);
+        }
+
+        .preset-btn.active {
+            background: rgba(59, 130, 246, 0.15);
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+        }
+
+        /* 复选框列表 */
+        .checkbox-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+        }
+
+        .cb-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+            user-select: none;
+        }
+
+        .cb-item:hover {
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .cb-item input[type="checkbox"] {
+            display: none;
+        }
+
+        .cb-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+            border: 2px solid var(--text-muted);
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .cb-item.checked .cb-dot {
+            border-color: var(--item-color);
+            background: var(--item-color);
+        }
+
+        .cb-item.unchecked .cb-dot {
+            opacity: 0.4;
+        }
+
+        .cb-label {
+            font-size: 13px;
+            color: var(--text-primary);
+            white-space: nowrap;
+        }
+
+        .cb-item.unchecked .cb-label {
+            color: var(--text-muted);
+        }
+
+        /* ===== 图表区 ===== */
+        .chart-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .chart-title {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 14px;
+        }
+
+        #compareChart {
+            width: 100%;
+            height: 420px;
+        }
+
+        /* 响应式 */
+        @media (max-width: 900px) {
+            .checkbox-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 600px) {
+            .checkbox-grid { grid-template-columns: repeat(2, 1fr); }
+            body { padding: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <h1>涨跌幅对比图 — 品种可选 Demo</h1>
+    <p class="subtitle">虚拟数据演示，点击复选框或分组预设切换显示品种</p>
+
+    <div class="controls">
+        <div class="controls-header">
+            <span class="controls-title">选择对比品种</span>
+            <span class="controls-hint">点击品种名或使用预设分组</span>
+        </div>
+
+        <div class="presets">
+            <button class="preset-btn active" data-group="all" onclick="applyPreset('all', this)">全部</button>
+            <button class="preset-btn" data-group="asia" onclick="applyPreset('asia', this)">亚太</button>
+            <button class="preset-btn" data-group="us" onclick="applyPreset('us', this)">欧美</button>
+            <button class="preset-btn" data-group="alt" onclick="applyPreset('alt', this)">商品+加密</button>
+            <button class="preset-btn" data-group="core" onclick="applyPreset('core', this)">核心4个</button>
+        </div>
+
+        <div class="checkbox-grid" id="checkboxGrid"></div>
+    </div>
+
+    <div class="chart-container">
+        <div class="chart-title">涨跌幅对比（归一化 %）</div>
+        <div id="compareChart"></div>
+    </div>
+
+    <script>
+        // ===== 品种定义 =====
+        const INDICES = [
+            { id: "sh000001", name: "上证指数",     short: "SSE",    color: "#3b82f6", group: ["asia", "core"] },
+            { id: "sz399006", name: "创业板指",     short: "CYB",    color: "#38bdf8", group: ["asia"] },
+            { id: "hkHSI",    name: "恒生指数",     short: "HSI",    color: "#ea580c", group: ["asia", "core"] },
+            { id: "hkHSTECH", name: "恒生科技",     short: "HSTECH", color: "#fb923c", group: ["asia"] },
+            { id: "em_N225",  name: "日经225",      short: "N225",   color: "#f472b6", group: ["asia"] },
+            { id: "em_KS11",  name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", group: ["asia"] },
+            { id: "us_IXIC",  name: "纳斯达克",     short: "IXIC",   color: "#7c3aed", group: ["us", "core"] },
+            { id: "us_INX",   name: "标普500",      short: "SPX",    color: "#c084fc", group: ["us", "core"] },
+            { id: "em_BRENT", name: "布伦特原油",   short: "BRENT",  color: "#eab308", group: ["alt"] },
+            { id: "em_AU9999", name: "黄金AU9999", short: "AU9999", color: "#fbbf24", group: ["alt"] },
+            { id: "em_BOND",  name: "中证全债",    short: "全债",   color: "#a78bfa", group: ["alt"] },
+            { id: "crypto_BTC", name: "比特币",     short: "BTC",    color: "#f97316", group: ["alt"] },
+        ];
+
+        // 预设分组
+        const PRESETS = {
+            all:  INDICES.map(i => i.id),
+            asia: INDICES.filter(i => i.group.includes("asia")).map(i => i.id),
+            us:   INDICES.filter(i => i.group.includes("us")).map(i => i.id),
+            alt:  INDICES.filter(i => i.group.includes("alt")).map(i => i.id),
+            core: INDICES.filter(i => i.group.includes("core")).map(i => i.id),
+        };
+
+        // 当前选中
+        let selected = new Set(PRESETS.all);
+
+        // ===== 生成虚拟数据（模拟YTD归一化涨跌幅）=====
+        function generateMockData() {
+            const days = 90;
+            const dates = [];
+            const startDate = new Date(2026, 0, 2); // 2026-01-02
+            for (let i = 0; i < days; i++) {
+                const d = new Date(startDate);
+                d.setDate(d.getDate() + i);
+                if (d.getDay() === 0 || d.getDay() === 6) continue; // 跳过周末
+                dates.push(d.toISOString().slice(0, 10));
+            }
+
+            const data = {};
+            // 各品种的模拟趋势参数
+            const trends = {
+                "sh000001":   { drift: 0.05, vol: 1.2 },
+                "sz399006":   { drift: 0.08, vol: 1.8 },
+                "hkHSI":      { drift: 0.03, vol: 1.0 },
+                "hkHSTECH":   { drift: 0.12, vol: 2.2 },
+                "em_N225":    { drift: 0.04, vol: 0.9 },
+                "em_KS11":    { drift: -0.02, vol: 1.1 },
+                "us_IXIC":    { drift: 0.10, vol: 1.5 },
+                "us_INX":     { drift: 0.06, vol: 1.0 },
+                "em_BRENT":   { drift: -0.05, vol: 2.0 },
+                "crypto_BTC": { drift: 0.15, vol: 3.5 },
+            };
+
+            for (const idx of INDICES) {
+                const t = trends[idx.id];
+                const values = [0]; // 起始点归一化为0
+                for (let i = 1; i < dates.length; i++) {
+                    const prev = values[i - 1];
+                    const daily = t.drift / dates.length + (Math.random() - 0.5) * t.vol;
+                    values.push(prev + daily);
+                }
+                data[idx.id] = values;
+            }
+
+            return { dates, data };
+        }
+
+        const mockResult = generateMockData();
+
+        // ===== 渲染复选框 =====
+        function renderCheckboxes() {
+            const grid = document.getElementById("checkboxGrid");
+            grid.innerHTML = INDICES.map(idx => {
+                const isChecked = selected.has(idx.id);
+                return `
+                    <label class="cb-item ${isChecked ? 'checked' : 'unchecked'}" 
+                           style="--item-color: ${idx.color}"
+                           data-id="${idx.id}"
+                           onclick="toggleIndex('${idx.id}')">
+                        <input type="checkbox" ${isChecked ? 'checked' : ''} />
+                        <span class="cb-dot"></span>
+                        <span class="cb-label">${idx.name}</span>
+                    </label>
+                `;
+            }).join("");
+        }
+
+        // ===== 切换单个品种 =====
+        function toggleIndex(id) {
+            if (selected.has(id)) {
+                if (selected.size <= 1) return; // 至少保留1个
+                selected.delete(id);
+            } else {
+                selected.add(id);
+            }
+            clearActivePreset();
+            renderCheckboxes();
+            renderChart();
+        }
+
+        // ===== 应用预设 =====
+        function applyPreset(group, btn) {
+            selected = new Set(PRESETS[group]);
+            // 高亮按钮
+            document.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            renderCheckboxes();
+            renderChart();
+        }
+
+        function clearActivePreset() {
+            // 检查是否匹配某个预设
+            for (const [key, ids] of Object.entries(PRESETS)) {
+                if (ids.length === selected.size && ids.every(id => selected.has(id))) {
+                    document.querySelectorAll(".preset-btn").forEach(b => {
+                        b.classList.toggle("active", b.dataset.group === key);
+                    });
+                    return;
+                }
+            }
+            document.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
+        }
+
+        // ===== 渲染图表 =====
+        let chartInstance = null;
+
+        function renderChart() {
+            if (!chartInstance) {
+                chartInstance = echarts.init(document.getElementById("compareChart"));
+            }
+
+            const { dates, data } = mockResult;
+            const series = [];
+
+            for (const idx of INDICES) {
+                if (!selected.has(idx.id)) continue;
+                series.push({
+                    name: idx.name,
+                    type: "line",
+                    data: data[idx.id].map(v => v.toFixed(2)),
+                    symbol: "none",
+                    lineStyle: { width: 2, color: idx.color },
+                    itemStyle: { color: idx.color },
+                    emphasis: { lineStyle: { width: 3 } },
+                });
+            }
+
+            const option = {
+                backgroundColor: "transparent",
+                tooltip: {
+                    trigger: "axis",
+                    backgroundColor: "rgba(15, 23, 42, 0.95)",
+                    borderColor: "#2a3654",
+                    textStyle: { color: "#e5e7eb", fontSize: 12 },
+                    formatter: function(params) {
+                        let html = `<div style="font-weight:600;margin-bottom:6px;">${params[0].axisValue}</div>`;
+                        // 按涨跌幅排序
+                        const sorted = [...params].sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+                        for (const p of sorted) {
+                            const val = parseFloat(p.value);
+                            const sign = val >= 0 ? "+" : "";
+                            const color = val >= 0 ? "#ef4444" : "#10b981";
+                            html += `<div style="display:flex;justify-content:space-between;gap:20px;margin:3px 0;">
+                                <span>${p.marker}${p.seriesName}</span>
+                                <span style="color:${color};font-weight:600;">${sign}${val}%</span>
+                            </div>`;
+                        }
+                        return html;
+                    }
+                },
+                legend: {
+                    show: false, // 用自定义复选框代替
+                },
+                grid: {
+                    left: 50, right: 20, top: 20, bottom: 40,
+                },
+                xAxis: {
+                    type: "category",
+                    data: dates,
+                    axisLine: { lineStyle: { color: "#2a3654" } },
+                    axisLabel: { color: "#6b7280", fontSize: 11 },
+                    axisTick: { show: false },
+                },
+                yAxis: {
+                    type: "value",
+                    axisLabel: {
+                        color: "#6b7280",
+                        fontSize: 11,
+                        formatter: val => (val >= 0 ? "+" : "") + val + "%"
+                    },
+                    splitLine: { lineStyle: { color: "#1e293b", type: "dashed" } },
+                    axisLine: { show: false },
+                },
+                series: series,
+            };
+
+            chartInstance.setOption(option, true);
+        }
+
+        // ===== 响应式 =====
+        window.addEventListener("resize", () => {
+            if (chartInstance) chartInstance.resize();
+        });
+
+        // ===== 初始化 =====
+        renderCheckboxes();
+        renderChart();
+    </script>
+</body>
+</html>
