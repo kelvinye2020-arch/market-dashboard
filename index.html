@@ -565,12 +565,12 @@
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX" },
             "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: null,        emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true },
             "em_AU9999": { name: "黄金AU9999",   short: "AU9999", color: "#fbbf24", qqKline: null,        qqCode: null,        emSecid: "118.AU9999", unit: "元/克",   isCommodity: true },
-            "em_BOND":   { name: "中证全债指数", short: "全债",   color: "#a78bfa", qqKline: null,        qqCode: null,        emSecid: "2.H11001",   isBond: true },
+            "sh511260":  { name: "十年国债ETF",   short: "BOND",   color: "#a78bfa", qqKline: "sh511260",  qqCode: "sh511260",  emSecid: "1.511260",   isBond: true },
             "crypto_BTC":{ name: "比特币",       short: "BTC",    color: "#f97316", qqKline: null,        qqCode: null,        emSecid: null,         unit: "USD",     isCrypto: true },
         };
 
         // 12个品种全部加入显示队列
-        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "em_AU9999", "em_BOND", "crypto_BTC"];
+        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "em_AU9999", "sh511260", "crypto_BTC"];
 
         // 记录哪些指数数据可用（运行时检测）
         let availableIndices = new Set(INDEX_ORDER);
