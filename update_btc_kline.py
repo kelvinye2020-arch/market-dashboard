@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-BTC K线数据更新脚本
-- 数据源：CoinGecko OHLC（180天，4天1根采样）
+BTC K线数据更新脚本（v2 - Binance klines 数据源）
+- 数据源：Binance api/v3/klines（日K，180天，免费稳定，无 token）
 - 目标文件：btc_kline.json
-- 兜底：CoinGecko 失败 -> 保留原文件不动，仅打印警告（避免坏数据覆盖好数据）
-- 用法：python update_btc_kline.py
+- 兜底：失败 -> 保留原文件不动（避免坏数据覆盖好数据）
+- 用法：python update_btc_kline.py [--push]
 """
 import os
 import sys
@@ -22,7 +22,13 @@ except Exception:
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TARGET_FILE = os.path.join(SCRIPT_DIR, "btc_kline.json")
-COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/bitcoin/ohlc?vs_currency=usd&days=180"
+# Binance 多镜像：主域名国内常被墙，data-api 子域可用
+BINANCE_URLS = [
+    "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=180",
+    "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=180",
+    "https://api1.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=180",
+    "https://api3.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=180",
+]
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
 
@@ -31,37 +37,40 @@ def log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 
-def fetch_coingecko(max_retry=3):
+def fetch_binance(max_retry=3):
+    """轮询多个 Binance 镜像，每个镜像最多重试 max_retry 次"""
     last_err = None
-    for i in range(max_retry):
-        try:
-            req = urllib.request.Request(COINGECKO_URL, headers=HEADERS)
-            raw = urllib.request.urlopen(req, timeout=25).read()
-            data = json.loads(raw)
-            if not isinstance(data, list) or len(data) < 10:
-                raise ValueError(f"返回数据异常：{type(data).__name__}, 长度 {len(data) if isinstance(data, list) else 'N/A'}")
-            return data
-        except (urllib.error.HTTPError, urllib.error.URLError, ValueError, json.JSONDecodeError) as e:
-            last_err = e
-            log(f"  CoinGecko 第 {i+1} 次失败：{e}")
-            if i < max_retry - 1:
-                time.sleep(5 * (i + 1))
-    raise RuntimeError(f"CoinGecko 重试 {max_retry} 次全失败：{last_err}")
+    for url in BINANCE_URLS:
+        log(f"尝试镜像：{url.split('/api/')[0]}")
+        for i in range(max_retry):
+            try:
+                req = urllib.request.Request(url, headers=HEADERS)
+                raw = urllib.request.urlopen(req, timeout=25).read()
+                data = json.loads(raw)
+                if not isinstance(data, list) or len(data) < 30:
+                    raise ValueError(f"返回数据异常：长度 {len(data) if isinstance(data, list) else 'N/A'}")
+                return data
+            except (urllib.error.HTTPError, urllib.error.URLError, ValueError, json.JSONDecodeError) as e:
+                last_err = e
+                log(f"  第 {i+1} 次失败：{e}")
+                if i < max_retry - 1:
+                    time.sleep(3 * (i + 1))
+    raise RuntimeError(f"所有 Binance 镜像全失败：{last_err}")
 
 
-def transform(ohlc_list):
-    """[[ts_ms, o, h, l, c], ...] -> {dates, opens, highs, lows, closes}"""
+def transform(klines):
+    """Binance klines 行格式：[openTime_ms, o, h, l, c, vol, closeTime_ms, ...]"""
     dates, opens, highs, lows, closes = [], [], [], [], []
-    for row in ohlc_list:
+    for row in klines:
         if not row or len(row) < 5:
             continue
-        ts_ms, o, h, l, c = row[:5]
+        ts_ms = row[0]
         date_str = datetime.datetime.utcfromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d")
         dates.append(date_str)
-        opens.append(float(o))
-        highs.append(float(h))
-        lows.append(float(l))
-        closes.append(float(c))
+        opens.append(float(row[1]))
+        highs.append(float(row[2]))
+        lows.append(float(row[3]))
+        closes.append(float(row[4]))
     return {
         "dates": dates,
         "opens": opens,
@@ -69,21 +78,24 @@ def transform(ohlc_list):
         "lows": lows,
         "closes": closes,
         "updated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "source": "coingecko_ohlc_180d",
+        "source": "binance_klines_1d_180",
     }
 
 
 def sanity_check(new_data, old_data):
-    """新数据必须 >= 旧数据条数，最末日期必须 >= 旧末日期"""
+    """健全性检查：条数足够、末日不回退、收盘价合理"""
     if not new_data.get("dates"):
         return False, "新数据 dates 为空"
-    if len(new_data["dates"]) < 10:
-        return False, f"新数据条数 {len(new_data['dates'])} 异常少"
+    if len(new_data["dates"]) < 150:
+        return False, f"新数据条数 {len(new_data['dates'])} 异常少（应 >= 150）"
     if old_data and old_data.get("dates"):
         old_last = old_data["dates"][-1]
         new_last = new_data["dates"][-1]
         if new_last < old_last:
             return False, f"新末日期 {new_last} 早于旧末日期 {old_last}，疑似数据回退"
+    last_close = new_data["closes"][-1]
+    if not (10000 < last_close < 500000):
+        return False, f"最新收盘 {last_close} 偏离合理区间(10k~500k)"
     return True, "ok"
 
 
@@ -103,14 +115,14 @@ def main():
 
     # 2. 拉取新数据
     try:
-        ohlc = fetch_coingecko()
-        log(f"CoinGecko 返回 {len(ohlc)} 条 OHLC")
+        klines = fetch_binance()
+        log(f"Binance 返回 {len(klines)} 条日K")
     except Exception as e:
         log(f"✘ 拉取失败，保留原文件不动：{e}")
         return 1
 
     # 3. 转换格式
-    new_data = transform(ohlc)
+    new_data = transform(klines)
     log(f"新数据：{len(new_data['dates'])} 条，{new_data['dates'][0]} ~ {new_data['dates'][-1]}")
 
     # 4. 健全性检查
@@ -123,7 +135,7 @@ def main():
     try:
         with open(TARGET_FILE, "w", encoding="utf-8") as f:
             json.dump(new_data, f, ensure_ascii=False, separators=(",", ":"))
-        log(f"✔ 写入成功，{len(new_data['dates'])} 条数据，末日 {new_data['dates'][-1]}")
+        log(f"✔ 写入成功，{len(new_data['dates'])} 条数据，末日 {new_data['dates'][-1]}，最新收盘 ${new_data['closes'][-1]:,.0f}")
     except Exception as e:
         log(f"✘ 写入失败：{e}")
         return 3
