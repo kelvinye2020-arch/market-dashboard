@@ -565,12 +565,12 @@
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX" },
             "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: null,        emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true },
             "em_AU9999": { name: "黄金AU9999",   short: "AU9999", color: "#fbbf24", qqKline: null,        qqCode: null,        emSecid: "118.AU9999", unit: "元/克",   isCommodity: true },
-            "sh511260":  { name: "十年国债ETF",   short: "BOND",   color: "#a78bfa", qqKline: "sh511260",  qqCode: "sh511260",  emSecid: "1.511260",   isBond: true },
+            "cn10y":     { name: "中国10年国债",  short: "CN10Y",  color: "#a78bfa", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true },
             "crypto_BTC":{ name: "比特币",       short: "BTC",    color: "#f97316", qqKline: null,        qqCode: null,        emSecid: null,         unit: "USD",     isCrypto: true },
         };
 
         // 12个品种全部加入显示队列
-        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "em_AU9999", "sh511260", "crypto_BTC"];
+        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "em_AU9999", "cn10y", "crypto_BTC"];
 
         // 记录哪些指数数据可用（运行时检测）
         let availableIndices = new Set(INDEX_ORDER);
@@ -1015,7 +1015,7 @@
             const spanDays = Math.max(7, Math.ceil((endDt - beginDt) / 86400000));
 
             // 1. K线历史数据
-            const klinePromises = INDEX_ORDER.filter(id => !INDEX_META[id].isCrypto).map(async (secid) => {
+            const klinePromises = INDEX_ORDER.filter(id => !INDEX_META[id].isCrypto && !INDEX_META[id].isYield).map(async (secid) => {
                 const meta = INDEX_META[secid];
                 const emptyResult = {
                     name: meta.name, code: meta.short, secid: secid, short: meta.short,
@@ -1150,6 +1150,75 @@
                 }
             })();
 
+            // 1c. 中国10年国债收益率（本地JSON，每日盘后更新）
+            const yieldKlinePromise = (async () => {
+                const secid = "cn10y";
+                const meta = INDEX_META[secid];
+                const emptyResult = {
+                    name: meta.name, code: meta.short, secid: secid, short: meta.short,
+                    dates: [], opens: [], closes: [], highs: [], lows: [],
+                    volumes: [], amounts: [], changes: [], change_pcts: [],
+                    noKlineData: true,
+                };
+                results[secid] = emptyResult;
+                try {
+                    const url = `cn10y_yield.json?_=${Math.floor(Date.now() / 60000)}`; // 1分钟缓存
+                    const resp = await fetchWithTimeout(url, {}, 5000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const json = await resp.json();
+                    if (!json || !Array.isArray(json.dates) || !Array.isArray(json.yields) || json.dates.length === 0) {
+                        throw new Error("数据为空");
+                    }
+
+                    // 按日期范围过滤
+                    const beginISO = `${beginDate.slice(0,4)}-${beginDate.slice(4,6)}-${beginDate.slice(6,8)}`;
+                    const endISO = `${endDate.slice(0,4)}-${endDate.slice(4,6)}-${endDate.slice(6,8)}`;
+                    const filteredIdx = [];
+                    json.dates.forEach((d, i) => {
+                        if (d >= beginISO && d <= endISO) filteredIdx.push(i);
+                    });
+                    if (filteredIdx.length === 0) {
+                        console.warn("[CN10Y] 当前时间范围无数据");
+                        availableIndices.delete(secid);
+                        return;
+                    }
+
+                    const dates = filteredIdx.map(i => json.dates[i]);
+                    const closes = filteredIdx.map(i => json.yields[i]);
+                    // opens/highs/lows 都用 closes（收益率没有日内开高低，用日值即可）
+                    const opens = closes.slice();
+                    const highs = closes.slice();
+                    const lows  = closes.slice();
+                    const changes = [], change_pcts = [];
+                    for (let i = 0; i < closes.length; i++) {
+                        if (i === 0) { changes.push(0); change_pcts.push(0); }
+                        else {
+                            const chg = closes[i] - closes[i - 1];          // BP差值（保留小数，单位是%，*100=BP）
+                            changes.push(chg);
+                            change_pcts.push(closes[i - 1] > 0 ? chg / closes[i - 1] * 100 : 0);
+                        }
+                    }
+
+                    results[secid] = {
+                        name: meta.name, code: meta.short, secid: secid, short: meta.short,
+                        dates, opens, closes, highs, lows,
+                        volumes: closes.map(() => 0),
+                        amounts: closes.map(() => 0),
+                        changes, change_pcts,
+                        klineSource: "ifind_edb",
+                        isYield: true,
+                        unit: "%",
+                        latest_date: json.latest_date,
+                        updated: json.updated,
+                    };
+                    console.log(`[CN10Y] 国债收益率K线加载成功: ${dates.length}天，最新 ${json.latest_date}=${json.latest}%`);
+                } catch (e) {
+                    console.warn("[CN10Y] 收益率数据加载失败:", e.message);
+                    availableIndices.delete(secid);
+                }
+            })();
+
+
             // 2. 实时行情（与K线并发执行，不串行等待）
             const qqRtIndices = INDEX_ORDER.filter(id => INDEX_META[id].qqCode);
             const emOnlyIndices = INDEX_ORDER.filter(id => !INDEX_META[id].qqCode && !INDEX_META[id].isCrypto && INDEX_META[id].emSecid);
@@ -1239,7 +1308,7 @@
             })();
 
             // K线 + 实时行情全部并发等待
-            await Promise.all([...klinePromises, cryptoKlinePromise, qqRtPromise, ...emRtPromises, cryptoRtPromise]);
+            await Promise.all([...klinePromises, cryptoKlinePromise, yieldKlinePromise, qqRtPromise, ...emRtPromises, cryptoRtPromise]);
 
             // 后处理：如果BTC实时数据来自Coinbase（无涨跌幅），用K线最近一天的close作为prevClose计算涨跌幅
             if (results["crypto_BTC"] && results["crypto_BTC"].realtime && results["crypto_BTC"].realtime.change_pct === 0) {
@@ -1594,10 +1663,50 @@
                 card.className = `index-card ${secid === activeSecid ? "active" : ""}`;
                 card.onclick = () => selectIndex(secid);
 
-                // 单位标注（商品/加密货币）
+                // 单位标注（商品/加密货币/收益率）
                 const unitBadge = meta.unit ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:4px">${meta.unit}</span>` : "";
-                // 价格格式化：比特币用整数，其他保留小数
-                const priceStr = meta.isCrypto ? "$" + Math.round(displayPrice).toLocaleString("en-US") : fmtNum(displayPrice);
+                // 价格格式化：比特币用整数，收益率保留4位小数，其他保留小数
+                let priceStr;
+                if (meta.isCrypto) {
+                    priceStr = "$" + Math.round(displayPrice).toLocaleString("en-US");
+                } else if (meta.isYield) {
+                    priceStr = displayPrice.toFixed(4);
+                } else {
+                    priceStr = fmtNum(displayPrice);
+                }
+
+                // 涨跌格式化
+                let changeAmtStr;
+                if (meta.isCrypto) {
+                    changeAmtStr = "$" + Math.abs(dayChange).toFixed(0);
+                } else if (meta.isYield) {
+                    // 收益率涨跌用 BP 表示：1BP = 0.01%，dayChange 单位是%，所以 *100 得到BP
+                    changeAmtStr = (Math.abs(dayChange) * 100).toFixed(2) + " BP";
+                } else {
+                    changeAmtStr = fmtNum(Math.abs(dayChange));
+                }
+
+                // YTD 标签：收益率展示绝对BP差值（基点变化），非百分比
+                let ytdHtmlForCard = ytdHtml;
+                if (meta.isYield && firstPrice > 0 && displayPrice > 0) {
+                    const ytdBp = (displayPrice - firstPrice) * 100;
+                    ytdHtmlForCard = `<div class="ytd-badge ${ytdBp >= 0 ? "positive" : "negative"}">YTD ${ytdBp >= 0 ? "+" : ""}${ytdBp.toFixed(1)} BP</div>`;
+                }
+
+                // 收益率卡片：把"-0.45%"换成"债市↑/↓"标签（方向与收益率相反）
+                // 收益率↓ → 债券价格↑ = 债市涨（A股惯例红色）
+                // 收益率↑ → 债券价格↓ = 债市跌（A股惯例绿色）
+                let secondLineHtml;
+                if (meta.isYield) {
+                    const bondUp = dayChange < 0;   // 收益率跌 = 债市涨
+                    const bondFlat = Math.abs(dayChange) < 1e-9;
+                    const bondClass = bondFlat ? "neutral" : (bondUp ? "up" : "down");
+                    const bondArrow = bondFlat ? "&#9644;" : (bondUp ? "&#9650;" : "&#9660;");
+                    const bondText = bondFlat ? "债市 持平" : (bondUp ? "债市 上涨" : "债市 下跌");
+                    secondLineHtml = `<span class="${bondClass}" title="收益率与债券价格方向相反：收益率下降意味着债券价格上涨">${bondArrow} ${bondText}</span>`;
+                } else {
+                    secondLineHtml = `<span class="${colorClass}">${isUp ? "+" : ""}${dayChangePct.toFixed(2)}%</span>`;
+                }
 
                 card.innerHTML = `
                     <div class="card-header">
@@ -1608,17 +1717,15 @@
                     <div class="card-change">
                         <span class="${colorClass}">
                             ${isUp ? "&#9650;" : dayChangePct < 0 ? "&#9660;" : "&#9644;"}
-                            ${meta.isCrypto ? "$" + Math.abs(dayChange).toFixed(0) : fmtNum(Math.abs(dayChange))}
+                            ${changeAmtStr}
                         </span>
-                        <span class="${colorClass}">
-                            ${isUp ? "+" : ""}${dayChangePct.toFixed(2)}%
-                        </span>
+                        ${secondLineHtml}
                     </div>
                     <div class="card-footer">
-                        ${ytdHtml}
+                        ${ytdHtmlForCard}
                         <div class="card-volume">
                             <span class="vol-icon"></span>
-                            ${fmtAmount(todayAmount)}
+                            ${meta.isYield ? (data.latest_date || "T-1") : fmtAmount(todayAmount)}
                         </div>
                     </div>
                     <div class="card-sparkline" id="spark-${meta.short}"></div>
@@ -1679,35 +1786,54 @@
 
             const ytdClass = ytdReturn >= 0 ? "up" : "down";
 
+            // 收益率特殊格式化
+            const meta = INDEX_META[activeSecid];
+            const isYield = !!meta.isYield;
+            const fmtVal = (v) => isYield ? v.toFixed(4) + "%" : fmtNum(v);
+            // 收益率"区间涨跌"用BP（基点）展示
+            const ytdBp = (lastClose - firstClose) * 100;
+            const ytdMain = isYield
+                ? `<div class="stat-value ${ytdClass}">${ytdBp >= 0 ? "+" : ""}${ytdBp.toFixed(1)} BP</div>
+                   <div class="stat-sub" style="color:var(--text-muted)">${ytdReturn >= 0 ? "+" : ""}${ytdReturn.toFixed(2)}%</div>`
+                : `<div class="stat-value ${ytdClass}">${ytdReturn >= 0 ? "+" : ""}${ytdReturn.toFixed(2)}%</div>
+                   <div class="stat-sub" style="color:var(--text-muted)">波动率 ${volatility.toFixed(1)}%</div>`;
+            // 收益率最后一栏改成"数据来源"
+            const lastBox = isYield
+                ? `<div class="stat-item">
+                       <div class="stat-label">数据来源</div>
+                       <div class="stat-value" style="color:var(--accent-cyan);font-size:14px">中债估值</div>
+                       <div class="stat-sub" style="color:var(--text-muted)">同花顺iFind T-1</div>
+                   </div>`
+                : `<div class="stat-item">
+                       <div class="stat-label">日均成交额</div>
+                       <div class="stat-value" style="color:var(--accent-cyan)">${avgAmountDisplay}</div>
+                       <div class="stat-sub" style="color:var(--text-muted)">累计 ${totalAmountDisplay}</div>
+                   </div>`;
+
             container.innerHTML = `
                 <div class="stat-item">
                     <div class="stat-label">起始点位</div>
-                    <div class="stat-value">${fmtNum(firstClose)}</div>
+                    <div class="stat-value">${fmtVal(firstClose)}</div>
                     <div class="stat-sub" style="color:var(--text-muted)">${data.dates[0]}</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">最新点位</div>
-                    <div class="stat-value">${fmtNum(lastClose)}</div>
+                    <div class="stat-value">${fmtVal(lastClose)}</div>
                     <div class="stat-sub" style="color:var(--text-muted)">${data.dates[data.dates.length - 1]}</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">区间最高</div>
-                    <div class="stat-value" style="color:var(--red)">${fmtNum(maxHigh)}</div>
+                    <div class="stat-value" style="color:var(--red)">${fmtVal(maxHigh)}</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">区间最低</div>
-                    <div class="stat-value" style="color:var(--green)">${fmtNum(minLow)}</div>
+                    <div class="stat-value" style="color:var(--green)">${fmtVal(minLow)}</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">区间涨跌</div>
-                    <div class="stat-value ${ytdClass}">${ytdReturn >= 0 ? "+" : ""}${ytdReturn.toFixed(2)}%</div>
-                    <div class="stat-sub" style="color:var(--text-muted)">波动率 ${volatility.toFixed(1)}%</div>
+                    ${ytdMain}
                 </div>
-                <div class="stat-item">
-                    <div class="stat-label">日均成交额</div>
-                    <div class="stat-value" style="color:var(--accent-cyan)">${avgAmountDisplay}</div>
-                    <div class="stat-sub" style="color:var(--text-muted)">累计 ${totalAmountDisplay}</div>
-                </div>
+                ${lastBox}
             `;
         }
 
@@ -1791,7 +1917,7 @@
             const yAxes = [{
                 type: "value", min: "dataMin", max: "dataMax", gridIndex: 0,
                 axisLine: { show: false }, axisTick: { show: false },
-                axisLabel: { color: "#6b7280", fontSize: 11 },
+                axisLabel: { color: "#6b7280", fontSize: 11, formatter: meta.isYield ? (v => v.toFixed(2) + "%") : undefined },
                 splitLine: { lineStyle: { color: "#1e293b", type: "dashed" } },
             }];
 
@@ -1863,6 +1989,17 @@
                         const amt = data.amounts[idx] || 0;
                         const chgColor = chg >= 0 ? "#ef4444" : "#10b981";
                         const amtLine = amt > 0 ? `<div style="color:#06b6d4;margin-top:2px">成交额: ${fmtAmount(amt)}</div>` : "";
+                        if (meta.isYield) {
+                            // 收益率：只展示当日值 + 较前一日 BP 变化
+                            const prev = idx > 0 ? data.closes[idx - 1] : close;
+                            const bp = (close - prev) * 100;
+                            const bpColor = bp >= 0 ? "#ef4444" : "#10b981";
+                            return `
+                                <div style="font-weight:600;margin-bottom:6px">${params[0].axisValue}</div>
+                                <div>收益率: <b>${close.toFixed(4)}%</b></div>
+                                <div style="color:${bpColor};font-weight:600;margin-top:4px">较前日: ${bp >= 0 ? "+" : ""}${bp.toFixed(2)} BP</div>
+                            `;
+                        }
                         return `
                             <div style="font-weight:600;margin-bottom:6px">${params[0].axisValue}</div>
                             <div>收盘: <b>${fmtNum(close)}</b> &nbsp; 开盘: ${fmtNum(open)}</div>
@@ -1901,7 +2038,7 @@
             const yAxes = [{
                 type: "value", min: "dataMin", max: "dataMax", gridIndex: 0,
                 axisLine: { show: false }, axisTick: { show: false },
-                axisLabel: { color: "#6b7280", fontSize: 11 },
+                axisLabel: { color: "#6b7280", fontSize: 11, formatter: meta.isYield ? (v => v.toFixed(2) + "%") : undefined },
                 splitLine: { lineStyle: { color: "#1e293b", type: "dashed" } },
             }];
 
@@ -1961,6 +2098,17 @@
                         const amt = data.amounts[idx] || 0;
                         const chgColor = chg >= 0 ? "#ef4444" : "#10b981";
                         const amtLine = amt > 0 ? `<div style="color:#06b6d4;margin-top:2px">成交额: ${fmtAmount(amt)}</div>` : "";
+                        if (meta.isYield) {
+                            const close = data.closes[idx];
+                            const prev = idx > 0 ? data.closes[idx - 1] : close;
+                            const bp = (close - prev) * 100;
+                            const bpColor = bp >= 0 ? "#ef4444" : "#10b981";
+                            return `
+                                <div style="font-weight:600;margin-bottom:6px">${data.dates[idx]}</div>
+                                <div>收益率: <b>${close.toFixed(4)}%</b></div>
+                                <div style="color:${bpColor};font-weight:600;margin-top:4px">较前日: ${bp >= 0 ? "+" : ""}${bp.toFixed(2)} BP</div>
+                            `;
+                        }
                         return `
                             <div style="font-weight:600;margin-bottom:6px">${data.dates[idx]}</div>
                             <div>开盘: ${fmtNum(data.opens[idx])} &nbsp; 收盘: <b>${fmtNum(data.closes[idx])}</b></div>
