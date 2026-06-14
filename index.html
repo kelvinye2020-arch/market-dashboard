@@ -565,12 +565,13 @@
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX" },
             "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: null,        emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true },
             "em_AU9999": { name: "黄金AU9999",   short: "AU9999", color: "#fbbf24", qqKline: null,        qqCode: null,        emSecid: "118.AU9999", unit: "元/克",   isCommodity: true },
-            "cn10y":     { name: "中国10年国债",  short: "CN10Y",  color: "#a78bfa", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true },
+            "dr007":     { name: "DR007利率",    short: "DR007",  color: "#34d399", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true, yieldFile: "dr007_rate.json" },
+            "cn10y":     { name: "中国10年国债",  short: "CN10Y",  color: "#a78bfa", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true, yieldFile: "cn10y_yield.json" },
             "crypto_BTC":{ name: "比特币",       short: "BTC",    color: "#f97316", qqKline: null,        qqCode: null,        emSecid: null,         unit: "USD",     isCrypto: true },
         };
 
-        // 12个品种全部加入显示队列
-        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "em_AU9999", "cn10y", "crypto_BTC"];
+        // 13个品种全部加入显示队列（dr007 在 cn10y 前面）
+        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "em_AU9999", "dr007", "cn10y", "crypto_BTC"];
 
         // 记录哪些指数数据可用（运行时检测）
         let availableIndices = new Set(INDEX_ORDER);
@@ -1150,9 +1151,8 @@
                 }
             })();
 
-            // 1c. 中国10年国债收益率（本地JSON，每日盘后更新）
-            const yieldKlinePromise = (async () => {
-                const secid = "cn10y";
+            // 1c. 利率曲线品种（isYield=true）统一加载：从本地JSON文件读取
+            const yieldKlinePromises = INDEX_ORDER.filter(id => INDEX_META[id].isYield).map(secid => (async () => {
                 const meta = INDEX_META[secid];
                 const emptyResult = {
                     name: meta.name, code: meta.short, secid: secid, short: meta.short,
@@ -1162,7 +1162,7 @@
                 };
                 results[secid] = emptyResult;
                 try {
-                    const url = `cn10y_yield.json?_=${Math.floor(Date.now() / 60000)}`; // 1分钟缓存
+                    const url = `${meta.yieldFile}?_=${Math.floor(Date.now() / 60000)}`; // 1分钟缓存
                     const resp = await fetchWithTimeout(url, {}, 5000);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     const json = await resp.json();
@@ -1178,7 +1178,7 @@
                         if (d >= beginISO && d <= endISO) filteredIdx.push(i);
                     });
                     if (filteredIdx.length === 0) {
-                        console.warn("[CN10Y] 当前时间范围无数据");
+                        console.warn(`[${secid}] 当前时间范围无数据`);
                         availableIndices.delete(secid);
                         return;
                     }
@@ -1211,12 +1211,12 @@
                         latest_date: json.latest_date,
                         updated: json.updated,
                     };
-                    console.log(`[CN10Y] 国债收益率K线加载成功: ${dates.length}天，最新 ${json.latest_date}=${json.latest}%`);
+                    console.log(`[${secid}] 收益率K线加载成功: ${dates.length}天，最新 ${json.latest_date}=${json.latest}%`);
                 } catch (e) {
-                    console.warn("[CN10Y] 收益率数据加载失败:", e.message);
+                    console.warn(`[${secid}] 收益率数据加载失败:`, e.message);
                     availableIndices.delete(secid);
                 }
-            })();
+            })());
 
 
             // 2. 实时行情（与K线并发执行，不串行等待）
@@ -1308,7 +1308,7 @@
             })();
 
             // K线 + 实时行情全部并发等待
-            await Promise.all([...klinePromises, cryptoKlinePromise, yieldKlinePromise, qqRtPromise, ...emRtPromises, cryptoRtPromise]);
+            await Promise.all([...klinePromises, cryptoKlinePromise, ...yieldKlinePromises, qqRtPromise, ...emRtPromises, cryptoRtPromise]);
 
             // 后处理：如果BTC实时数据来自Coinbase（无涨跌幅），用K线最近一天的close作为prevClose计算涨跌幅
             if (results["crypto_BTC"] && results["crypto_BTC"].realtime && results["crypto_BTC"].realtime.change_pct === 0) {
