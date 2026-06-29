@@ -1,28 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-build_cn10y.py — 中国10年期国债收益率(中债估值) JSON 增量更新器
+build_dr007.py — DR007 加权平均利率 JSON 增量更新器
 ------------------------------------------------------------------
-指标：中债国债到期收益率:10年   index_id = L001619604   单位 %   日频 T-1
+指标：DR007(存款类机构质押式回购7天加权利率)   index_id = L001619493   单位 %   日频 T-1
 数据源：同花顺 iFind EDB MCP (hexin-ifind-ds-edb-mcp)
 
-【运行模式】
-本脚本不自己联网。取数由"自动化 Agent"在执行时调用 iFind EDB MCP 完成，
-把新数据(date,yield 列表)通过 --data 传给本脚本，脚本负责：
-  1. 读取现有 cn10y_yield.json
-  2. 合并新数据(同日期覆盖、新日期追加)
-  3. 强校验 dates / yields 长度一致 —— 不一致直接报错退出，绝不写坏文件
-  4. 升序排序后写回，刷新 latest / latest_date / updated / count
+【运行模式】见 build_cn10y.py 说明，逻辑完全一致。
 
 【调用方式】
-  python build_cn10y.py --data '[["2026-06-26",1.7314],["2026-06-25",1.7351]]'
-  # 或从 stdin 读 JSON 数组：
-  echo '[["2026-06-26",1.7314]]' | python build_cn10y.py --stdin
-  # 仅校验现有文件(不改数据)：
-  python build_cn10y.py --check
+  python build_dr007.py --data '[["2026-06-26",1.4672],["2026-06-25",1.5098]]'
+  echo '[["2026-06-26",1.4672]]' | python build_dr007.py --stdin
+  python build_dr007.py --check
 
-⚠️ 取数时 query 必须精确到"DR007/中债10年"等指标全名，避免被模糊匹配到
-   相近指标(如 R007 vs DR007)。务必核对返回 index_id == L001619604。
+⚠️ 取数时务必区分 DR007(L001619493) 与 R007(M004039736)：
+   - DR007 = 存款类机构质押式回购利率(仅银行，央行政策锚)  ← 本看板用这个
+   - R007  = 全市场质押式回购利率(含非银，波动更大)        ← 不是这个！
+   query 写"DR007加权平均利率，日频"，并核对返回 index_id == L001619493。
 ------------------------------------------------------------------
 """
 
@@ -32,15 +26,14 @@ import os
 import sys
 from datetime import datetime
 
-INDEX_ID = "L001619604"
-NAME = "中国10年期国债收益率"
-SOURCE = "中债估值（同花顺iFind EDB）"
+INDEX_ID = "L001619493"
+NAME = "DR007加权平均利率"
+SOURCE = "iFind EDB"
 UNIT = "%"
-JSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cn10y_yield.json")
+JSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dr007_rate.json")
 
 
 def load_existing(path):
-    """读现有 JSON，返回 {date: yield} 字典。文件不存在则返回空。"""
     if not os.path.exists(path):
         return {}
     with open(path, "r", encoding="utf-8") as f:
@@ -55,10 +48,6 @@ def load_existing(path):
 
 
 def merge_and_write(new_rows, path):
-    """
-    new_rows: [[date, yield], ...]
-    合并到现有数据(同日期覆盖)，校验后写回。
-    """
     data_map = load_existing(path)
     before = len(data_map)
 
@@ -73,12 +62,10 @@ def merge_and_write(new_rows, path):
             data_map[dt] = val
             added += 1
 
-    # 升序
     items = sorted(data_map.items(), key=lambda x: x[0])
     dates = [k for k, _ in items]
     yields = [v for _, v in items]
 
-    # 强校验
     assert len(dates) == len(yields), f"FATAL: dates({len(dates)}) != yields({len(yields)})"
 
     payload = {
@@ -104,7 +91,6 @@ def merge_and_write(new_rows, path):
 
 
 def check_only(path):
-    """仅校验现有文件长度一致性。"""
     if not os.path.exists(path):
         print(f"[ERR] 文件不存在: {path}")
         return 1
@@ -119,8 +105,8 @@ def check_only(path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="cn10y JSON 增量更新器")
-    ap.add_argument("--data", help='新数据 JSON 数组，如 \'[["2026-06-26",1.7314]]\'')
+    ap = argparse.ArgumentParser(description="dr007 JSON 增量更新器")
+    ap.add_argument("--data", help='新数据 JSON 数组，如 \'[["2026-06-26",1.4672]]\'')
     ap.add_argument("--stdin", action="store_true", help="从 stdin 读 JSON 数组")
     ap.add_argument("--check", action="store_true", help="仅校验现有文件长度")
     args = ap.parse_args()
