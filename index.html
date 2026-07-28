@@ -685,31 +685,28 @@
                 };
             }
 
-            // 双端点竞速
-            let delayResolved = false;
-            const delayPromise = tryFetch('push2delay.eastmoney.com').then(r => { delayResolved = true; return r; });
+            // 第1次尝试：push2delay（最多等 1.5 秒）
+            const delayP = tryFetch('push2delay.eastmoney.com')
+                .then(r => ({ ok: true, data: r }))
+                .catch(e => ({ ok: false, err: e.message }));
 
-            const racePromise = new Promise((resolve) => {
-                delayPromise.then(resolve).catch(() => {});
-                setTimeout(() => {
-                    if (!delayResolved) {
-                        tryFetch('push2.eastmoney.com').then(resolve).catch(() => {});
-                    }
-                }, 1500);
-            });
+            const timeoutP = new Promise(resolve =>
+                setTimeout(() => resolve({ ok: false, timeout: true }), 1500)
+            );
 
+            const first = await Promise.race([delayP, timeoutP]);
+
+            if (first.ok) {
+                const r = first.data;
+                r.change = r.prevClose > 0 ? r.price - r.prevClose : 0;
+                return r;
+            }
+
+            // 第2次尝试：push2（1.5s 后启动，或 push2delay 失败后启动）
             try {
-                const result = await Promise.race([
-                    delayPromise,
-                    racePromise
-                ]);
-                if (!result) throw new Error('no result');
-                if (result.prevClose > 0) {
-                    result.change = result.price - result.prevClose;
-                } else {
-                    result.change = 0;
-                }
-                return result;
+                const r = await tryFetch('push2.eastmoney.com');
+                r.change = r.prevClose > 0 ? r.price - r.prevClose : 0;
+                return r;
             } catch (e) {
                 console.warn(`[EM] 实时行情获取失败 ${emSecid}:`, e.message);
                 return null;
