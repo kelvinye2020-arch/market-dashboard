@@ -16,16 +16,44 @@ from datetime import datetime
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT = os.path.join(SCRIPT_DIR, "em_quotes.json")
 
-# 4个品种定义：secid, 小数位, 显示名
+# 4个品种定义：secid, 小数位, 显示名, 年初价（每年1月初手工更新一次即可）
+# 历史K线接口（push2his）公司网也封了，只能硬编码
 INDICES = [
-    {"key": "em_N225",  "secid": "100.N225",   "decimals": 2, "name": "日经225"},
-    {"key": "em_KS11",  "secid": "100.KS11",   "decimals": 2, "name": "韩国KOSPI"},
-    {"key": "em_BRENT", "secid": "112.B00Y",   "decimals": 2, "name": "布伦特原油"},
-    {"key": "em_AU9999","secid": "118.AU9999",  "decimals": 2, "name": "黄金AU9999"},
+    {"key": "em_N225",  "secid": "100.N225",   "decimals": 2, "name": "日经225",     "year_start": 40354.94},
+    {"key": "em_KS11",  "secid": "100.KS11",   "decimals": 2, "name": "韩国KOSPI",   "year_start": 2584.50},
+    {"key": "em_BRENT", "secid": "112.B00Y",   "decimals": 2, "name": "布伦特原油",  "year_start": 74.40},
+    {"key": "em_AU9999","secid": "118.AU9999",  "decimals": 2, "name": "黄金AU9999", "year_start": 614.20},
 ]
 
 FIELDS = "f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f60,f170,f171"
 HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.eastmoney.com/"}
+
+
+def fetch_year_start(secid, decimals):
+    """拉取当年第一个交易日的收盘价（用于计算 YTD）"""
+    year = datetime.now().year
+    beg = f"{year}0101"
+    end = f"{year}0131"  # 1月份足够覆盖首日
+    url = (
+        f"https://push2his.eastmoney.com/api/qt/stock/kline/get?"
+        f"secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f59"
+        f"&klt=101&fqt=0&beg={beg}&end={end}"
+    )
+    try:
+        req = urllib.request.Request(url, headers=HEADERS)
+        resp = urllib.request.urlopen(req, timeout=TIMEOUT)
+        raw = json.loads(resp.read().decode("utf-8"))
+        klines = raw.get("data", {}).get("klines", [])
+        if not klines:
+            return None
+        # klines[0] = "YYYY-MM-DD,开盘,收盘,最高,最低,成交量,成交额,振幅"
+        first_row = klines[0].split(",")
+        first_close = float(first_row[2])  # 第3列是收盘
+        divisor = pow(10, decimals)
+        return round(first_close / divisor, decimals)
+    except Exception as e:
+        print(f"  [{secid}] 年初价拉取失败: {e}")
+        return None
 TIMEOUT = 10
 
 
@@ -90,8 +118,12 @@ def main():
     for idx in INDICES:
         raw = fetch_one(idx["secid"])
         if raw:
-            quotes[idx["key"]] = parse(raw, idx["decimals"])
-            print(f"  [{idx['name']}] {quotes[idx['key']]['price']}  ({quotes[idx['key']]['change_pct']:+.2f}%)")
+            q = parse(raw, idx["decimals"])
+            q["year_start"] = idx.get("year_start")
+            quotes[idx["key"]] = q
+            ytd = (q["price"] - q["year_start"]) / q["year_start"] * 100 if q.get("year_start") else None
+            ytd_str = f"  YTD={ytd:+.2f}%" if ytd is not None else "  (无年初价)"
+            print(f"  [{idx['name']}] {q['price']}  ({q['change_pct']:+.2f}%){ytd_str}")
         else:
             quotes[idx["key"]] = None
             print(f"  [{idx['name']}] 失败")
