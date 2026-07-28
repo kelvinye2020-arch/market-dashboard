@@ -1271,12 +1271,11 @@
                         }
                         console.log(`[EM] ${secid} 实时数据成功: 价格=${rt.price}`);
                     } else {
-                        console.warn(`[EM] ${secid} 实时数据无效`);
-                        availableIndices.delete(secid);
+                        console.warn(`[EM] ${secid} 实时数据获取失败，降级显示K线数据`);
+                        // 不删卡片，renderCards 会自动用 K 线收盘价
                     }
                 } catch (e) {
-                    console.warn(`[EM] ${secid} 实时获取异常:`, e);
-                    availableIndices.delete(secid);
+                    console.warn(`[EM] ${secid} 实时获取异常，降级显示K线数据:`, e);
                 }
             });
 
