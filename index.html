@@ -527,8 +527,6 @@
     <!-- 底部来源标识 -->
     <footer class="footer">
         数据来源：东方财富 + 腾讯财经 + CoinGecko（三源智能降级） &nbsp;|&nbsp; 仅供参考，不构成投资建议 &nbsp;|&nbsp; 页面每次打开自动刷新最新数据 &nbsp;|&nbsp; v4.5
-        <br>
-        <span style="font-size:11px;color:var(--text-muted)">日经225 / 韩国KOSPI / 布伦特原油 / 黄金AU9999 实时价格延迟约 5 分钟（自动化轮询推送）</span>
     </footer>
 
     <script>
@@ -658,59 +656,38 @@
         }
 
         // ======== 东方财富实时行情（用于日韩指数/商品）========
-        // 双端点并发竞速：push2delay 主力（2分钟延迟，公司网更稳定），
-        // 1.5秒未返回则同步启动 push2 兜底，两者同时跑，谁先到用谁。两个都失败才隐藏卡片。
-        async function fetchEMRealtime(emSecid) {
+        // 双源：push2delay（2分钟延迟，公司网更稳定）+ push2 兜底
+        async function _fetchEMRealtimeFrom(emSecid, baseUrl) {
             const fields = 'f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f60,f170,f171';
-            const ts = Date.now();
-
-            async function tryFetch(baseUrl) {
-                const url = `https://${baseUrl}/api/qt/stock/get?secid=${emSecid}&fields=${fields}&_=${ts}`;
-                const resp = await fetchWithTimeout(url, { mode: 'cors' }, 6000);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const json = await resp.json();
-                if (!json || !json.data || !json.data.f43) throw new Error('empty');
-                const d = json.data;
-                const decimals = d.f59 || 2;
-                const divisor = Math.pow(10, decimals);
-                return {
-                    price: (d.f43 || 0) / divisor,
-                    open: (d.f46 || 0) / divisor,
-                    high: (d.f44 || 0) / divisor,
-                    low: (d.f45 || 0) / divisor,
-                    prevClose: (d.f60 || 0) / divisor,
-                    changePct: (d.f170 || 0) / 100,
-                    volume: d.f47 || 0,
-                    amount: d.f48 || 0,
-                };
-            }
-
-            // 第1次尝试：push2delay（最多等 1.5 秒）
-            const delayP = tryFetch('push2delay.eastmoney.com')
-                .then(r => ({ ok: true, data: r }))
-                .catch(e => ({ ok: false, err: e.message }));
-
-            const timeoutP = new Promise(resolve =>
-                setTimeout(() => resolve({ ok: false, timeout: true }), 1500)
-            );
-
-            const first = await Promise.race([delayP, timeoutP]);
-
-            if (first.ok) {
-                const r = first.data;
-                r.change = r.prevClose > 0 ? r.price - r.prevClose : 0;
-                return r;
-            }
-
-            // 第2次尝试：push2（1.5s 后启动，或 push2delay 失败后启动）
-            try {
-                const r = await tryFetch('push2.eastmoney.com');
-                r.change = r.prevClose > 0 ? r.price - r.prevClose : 0;
-                return r;
-            } catch (e) {
-                console.warn(`[EM] 实时行情获取失败 ${emSecid}:`, e.message);
-                return null;
-            }
+            const url = `https://${baseUrl}/api/qt/stock/get?secid=${emSecid}&fields=${fields}&_=${Date.now()}`;
+            const resp = await fetchWithTimeout(url, { mode: 'cors' }, 6000);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const json = await resp.json();
+            if (!json || !json.data || !json.data.f43) throw new Error('empty');
+            const d = json.data;
+            const decimals = d.f59 || 2;
+            const divisor = Math.pow(10, decimals);
+            const price = (d.f43 || 0) / divisor;
+            const prevClose = (d.f60 || 0) / divisor;
+            return {
+                price,
+                open: (d.f46 || 0) / divisor,
+                high: (d.f44 || 0) / divisor,
+                low: (d.f45 || 0) / divisor,
+                prevClose,
+                change: prevClose > 0 ? price - prevClose : 0,
+                changePct: (d.f170 || 0) / 100,
+                volume: d.f47 || 0,
+                amount: d.f48 || 0,
+            };
+        }
+        // 主力：push2delay
+        async function fetchEMRealtime(emSecid) {
+            return _fetchEMRealtimeFrom(emSecid, 'push2delay.eastmoney.com');
+        }
+        // 兜底：push2
+        async function fetchEMRealtimePush2(emSecid) {
+            return _fetchEMRealtimeFrom(emSecid, 'push2.eastmoney.com');
         }
 
         // ======== 比特币实时价格（三源降级：Coinbase → blockchain.info → CoinGecko）========
@@ -1096,16 +1073,11 @@
                         parsed = await tryEM();
                     }
                 } else {
-                    // 日韩/商品：只走东方财富，失败则用空K线（实时价由 emQuotesPromise 从本地JSON 注入）
+                    // 日韩/商品：只走东方财富，失败则隐藏（实时数据也来自东方财富 API）
                     parsed = await tryEM();
                     if (!parsed) {
-                        console.warn(`[EM] ${secid} K线失败，仍保留卡片（无图表，但实时价走本地JSON）`);
-                        parsed = {
-                            name: meta.name, code: meta.short, secid: secid, short: meta.short,
-                            dates: [], opens: [], closes: [], highs: [], lows: [],
-                            volumes: [], amounts: [], changes: [], change_pcts: [],
-                            noKlineData: true,
-                        };
+                        console.warn(`[EM] ${secid} K线失败，隐藏该品种`);
+                        availableIndices.delete(secid);
                     }
                 }
 
@@ -1278,32 +1250,42 @@
             })();
 
             // 2b. 东方财富实时行情（日经指数/韩国KOSPI/布伦特原油/AU9999）
-            // 从 em_quotes.json 读取（自动化每5分钟更新），绕过公司网对 EM API 的限制
-            const emQuotesPromise = (async () => {
+            // 直接查询东方财富：push2delay 主力（2分钟延迟，公司网更稳定），
+            // 失败则切 push2 兜底；都失败则隐藏该品种
+            const emRtPromises = emOnlyIndices.map(async (secid) => {
                 try {
-                    const eqUrl = `em_quotes.json?_=${Math.floor(Date.now() / 60000)}`;
-                    const eqResp = await fetchWithTimeout(eqUrl, {}, 5000);
-                    if (!eqResp.ok) throw new Error(`HTTP ${eqResp.status}`);
-                    const eqData = await eqResp.json();
-                    const quotes = eqData.quotes || {};
-                    for (const [secid, q] of Object.entries(quotes)) {
-                        if (q && q.price > 0 && results[secid]) {
-                            results[secid].realtime = {
-                                price: q.price,
-                                change: q.change,
-                                change_pct: q.change_pct,
-                                volume: q.volume || 0,
-                                amount: q.amount || 0,
-                            };
-                            results[secid].eqUpdated = eqData.updated;
-                        }
+                    const meta = INDEX_META[secid];
+                    let rt = null;
+                    // 主力：push2delay
+                    try {
+                        rt = await fetchEMRealtime(meta.emSecid);
+                    } catch (e) { /* 静默 */ }
+                    // 兜底：push2（1.5s 后启用，或 push2delay 失败后立即启用）
+                    if (!rt || rt.price <= 0) {
+                        try {
+                            rt = await fetchEMRealtimePush2(meta.emSecid);
+                        } catch (e) { /* 静默 */ }
                     }
-                    const ok = Object.values(quotes).filter(q => q && q.price > 0).length;
-                    console.log(`[EM] JSON 加载成功: ${ok}/4 有效 (更新于: ${eqData.updated})`);
+                    if (rt && rt.price > 0) {
+                        if (results[secid]) {
+                            results[secid].realtime = {
+                                price: rt.price,
+                                change: rt.change,
+                                change_pct: rt.changePct,
+                                volume: rt.volume,
+                                amount: rt.amount,
+                            };
+                        }
+                        console.log(`[EM] ${secid} 实时数据成功: 价格=${rt.price}`);
+                    } else {
+                        console.warn(`[EM] ${secid} 东方财富双端点均失败，隐藏该品种`);
+                        availableIndices.delete(secid);
+                    }
                 } catch (e) {
-                    console.warn("[EM] JSON 加载失败，4个品种将无实时数据:", e.message);
+                    console.warn(`[EM] ${secid} 异常:`, e);
+                    availableIndices.delete(secid);
                 }
-            })();
+            });
 
             // 2c. 比特币实时行情（三源降级）
             const cryptoRtPromise = (async () => {
@@ -1335,7 +1317,7 @@
             })();
 
             // K线 + 实时行情全部并发等待
-            await Promise.all([...klinePromises, cryptoKlinePromise, ...yieldKlinePromises, qqRtPromise, emQuotesPromise, cryptoRtPromise]);
+            await Promise.all([...klinePromises, cryptoKlinePromise, ...yieldKlinePromises, qqRtPromise, ...emRtPromises, cryptoRtPromise]);
 
             // 后处理：如果BTC实时数据来自Coinbase（无涨跌幅），用K线最近一天的close作为prevClose计算涨跌幅
             if (results["crypto_BTC"] && results["crypto_BTC"].realtime && results["crypto_BTC"].realtime.change_pct === 0) {
@@ -1587,27 +1569,27 @@
                     });
                 }
 
-                // 东方财富实时（日韩/原油）— 读本地 em_quotes.json
-                try {
-                    const eqUrl = `em_quotes.json?_=${Math.floor(Date.now() / 60000)}`;
-                    const eqResp = await fetchWithTimeout(eqUrl, {}, 5000);
-                    if (eqResp.ok) {
-                        const eqData = await eqResp.json();
-                        const quotes = eqData.quotes || {};
-                        for (const [secid, q] of Object.entries(quotes)) {
-                            if (q && q.price > 0 && allData[secid]) {
-                                allData[secid].realtime = {
-                                    price: q.price,
-                                    change: q.change,
-                                    change_pct: q.change_pct,
-                                    volume: q.volume || 0,
-                                    amount: q.amount || 0,
-                                };
-                                allData[secid].eqUpdated = eqData.updated;
-                            }
+                // 东方财富实时（日韩/原油）— 直查 API：push2delay 失败则切 push2
+                const emOnlyIdx = INDEX_ORDER.filter(id => !INDEX_META[id].qqCode && !INDEX_META[id].isCrypto && INDEX_META[id].emSecid && availableIndices.has(id));
+                await Promise.all(emOnlyIdx.map(async (secid) => {
+                    try {
+                        const meta = INDEX_META[secid];
+                        let rt = null;
+                        try { rt = await fetchEMRealtime(meta.emSecid); } catch (e) {}
+                        if (!rt || rt.price <= 0) {
+                            try { rt = await fetchEMRealtimePush2(meta.emSecid); } catch (e) {}
                         }
-                    }
-                } catch (e) { /* 静默 */ }
+                        if (rt && rt.price > 0 && allData[secid]) {
+                            allData[secid].realtime = {
+                                price: rt.price,
+                                change: rt.change,
+                                change_pct: rt.changePct,
+                                volume: rt.volume,
+                                amount: rt.amount,
+                            };
+                        }
+                    } catch (e) { /* 静默 */ }
+                }));
 
                 // 比特币实时（Coinbase优先）
                 if (availableIndices.has("crypto_BTC")) {
