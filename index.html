@@ -657,42 +657,63 @@
             };
         }
 
-        // ======== 东方财富实时行情（用于日韩指数）========
-        // 接口：push2delay.eastmoney.com（2分钟延迟，从公司网络可达，比 push2 稳定）
+        // ======== 东方财富实时行情（用于日韩指数/商品）========
+        // 双端点并发竞速：push2delay 主力（2分钟延迟，公司网更稳定），
+        // 1.5秒未返回则同步启动 push2 兜底，两者同时跑，谁先到用谁。两个都失败才隐藏卡片。
         async function fetchEMRealtime(emSecid) {
-            const url = `https://push2delay.eastmoney.com/api/qt/stock/get?secid=${emSecid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f60,f170,f171&_=${Date.now()}`;
-            try {
-                const resp = await fetchWithTimeout(url, { mode: 'cors' });
+            const fields = 'f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f60,f170,f171';
+            const ts = Date.now();
+
+            async function tryFetch(baseUrl) {
+                const url = `https://${baseUrl}/api/qt/stock/get?secid=${emSecid}&fields=${fields}&_=${ts}`;
+                const resp = await fetchWithTimeout(url, { mode: 'cors' }, 6000);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const json = await resp.json();
-                if (json && json.data) {
-                    const d = json.data;
-                    // f43=最新价, f44=最高, f45=最低, f46=开盘, f60=昨收
-                    // f170=涨跌幅(×100)，注意：不是涨跌额！f171含义不明，不使用
-                    // f47=成交量, f48=成交额
-                    const decimals = d.f59 || 2; // f59=小数位数
-                    const divisor = Math.pow(10, decimals);
-                    const price = (d.f43 || 0) / divisor;
-                    const prevClose = (d.f60 || 0) / divisor;
-                    const changePct = (d.f170 || 0) / 100; // f170是涨跌幅*100
-                    const change = prevClose > 0 ? price - prevClose : 0; // 涨跌额自己算
-                    return {
-                        name: d.f58 || '',
-                        price: price,
-                        open: (d.f46 || 0) / divisor,
-                        high: (d.f44 || 0) / divisor,
-                        low: (d.f45 || 0) / divisor,
-                        prevClose: prevClose,
-                        change: change,
-                        changePct: changePct,
-                        volume: d.f47 || 0,
-                        amount: d.f48 || 0,
-                    };
+                if (!json || !json.data || !json.data.f43) throw new Error('empty');
+                const d = json.data;
+                const decimals = d.f59 || 2;
+                const divisor = Math.pow(10, decimals);
+                return {
+                    price: (d.f43 || 0) / divisor,
+                    open: (d.f46 || 0) / divisor,
+                    high: (d.f44 || 0) / divisor,
+                    low: (d.f45 || 0) / divisor,
+                    prevClose: (d.f60 || 0) / divisor,
+                    changePct: (d.f170 || 0) / 100,
+                    volume: d.f47 || 0,
+                    amount: d.f48 || 0,
+                };
+            }
+
+            // 双端点竞速
+            let delayResolved = false;
+            const delayPromise = tryFetch('push2delay.eastmoney.com').then(r => { delayResolved = true; return r; });
+
+            const racePromise = new Promise((resolve) => {
+                delayPromise.then(resolve).catch(() => {});
+                setTimeout(() => {
+                    if (!delayResolved) {
+                        tryFetch('push2.eastmoney.com').then(resolve).catch(() => {});
+                    }
+                }, 1500);
+            });
+
+            try {
+                const result = await Promise.race([
+                    delayPromise,
+                    racePromise
+                ]);
+                if (!result) throw new Error('no result');
+                if (result.prevClose > 0) {
+                    result.change = result.price - result.prevClose;
+                } else {
+                    result.change = 0;
                 }
+                return result;
             } catch (e) {
                 console.warn(`[EM] 实时行情获取失败 ${emSecid}:`, e.message);
+                return null;
             }
-            return null;
         }
 
         // ======== 比特币实时价格（三源降级：Coinbase → blockchain.info → CoinGecko）========
@@ -1271,11 +1292,12 @@
                         }
                         console.log(`[EM] ${secid} 实时数据成功: 价格=${rt.price}`);
                     } else {
-                        console.warn(`[EM] ${secid} 实时数据获取失败，降级显示K线数据`);
-                        // 不删卡片，renderCards 会自动用 K 线收盘价
+                        console.warn(`[EM] ${secid} 双端点均失败，隐藏该品种`);
+                        availableIndices.delete(secid);
                     }
                 } catch (e) {
-                    console.warn(`[EM] ${secid} 实时获取异常，降级显示K线数据:`, e);
+                    console.warn(`[EM] ${secid} 双端点均异常:`, e);
+                    availableIndices.delete(secid);
                 }
             });
 
