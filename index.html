@@ -1096,11 +1096,16 @@
                         parsed = await tryEM();
                     }
                 } else {
-                    // 日韩/商品：只走东方财富，失败则隐藏
+                    // 日韩/商品：只走东方财富，失败则用空K线（实时价由 emQuotesPromise 从本地JSON 注入）
                     parsed = await tryEM();
                     if (!parsed) {
-                        console.warn(`[EM] ${secid} K线失败，隐藏该品种`);
-                        availableIndices.delete(secid);
+                        console.warn(`[EM] ${secid} K线失败，仍保留卡片（无图表，但实时价走本地JSON）`);
+                        parsed = {
+                            name: meta.name, code: meta.short, secid: secid, short: meta.short,
+                            dates: [], opens: [], closes: [], highs: [], lows: [],
+                            volumes: [], amounts: [], changes: [], change_pcts: [],
+                            noKlineData: true,
+                        };
                     }
                 }
 
