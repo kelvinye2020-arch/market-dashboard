@@ -65,7 +65,7 @@ def transform(klines):
         if not row or len(row) < 5:
             continue
         ts_ms = row[0]
-        date_str = datetime.datetime.utcfromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d")
+        date_str = datetime.datetime.fromtimestamp(ts_ms / 1000, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
         dates.append(date_str)
         opens.append(float(row[1]))
         highs.append(float(row[2]))
