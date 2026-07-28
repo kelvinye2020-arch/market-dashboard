@@ -16,13 +16,14 @@ from datetime import datetime
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT = os.path.join(SCRIPT_DIR, "em_quotes.json")
 
-# 4个品种定义：secid, 小数位, 显示名, 年初价（每年1月初手工更新一次即可）
-# 历史K线接口（push2his）公司网也封了，只能硬编码
+# 4个品种定义：secid, 小数位, 显示名
+# 注：year_start 字段已弃用——历史K线接口（push2his）公司网也封，硬编码会误导
+# 如果将来有可靠历史数据源，添加 year_start 后 YTD 自动启用
 INDICES = [
-    {"key": "em_N225",  "secid": "100.N225",   "decimals": 2, "name": "日经225",     "year_start": 40354.94},
-    {"key": "em_KS11",  "secid": "100.KS11",   "decimals": 2, "name": "韩国KOSPI",   "year_start": 2584.50},
-    {"key": "em_BRENT", "secid": "112.B00Y",   "decimals": 2, "name": "布伦特原油",  "year_start": 74.40},
-    {"key": "em_AU9999","secid": "118.AU9999",  "decimals": 2, "name": "黄金AU9999", "year_start": 614.20},
+    {"key": "em_N225",  "secid": "100.N225",   "decimals": 2, "name": "日经225"},
+    {"key": "em_KS11",  "secid": "100.KS11",   "decimals": 2, "name": "韩国KOSPI"},
+    {"key": "em_BRENT", "secid": "112.B00Y",   "decimals": 2, "name": "布伦特原油"},
+    {"key": "em_AU9999","secid": "118.AU9999",  "decimals": 2, "name": "黄金AU9999"},
 ]
 
 FIELDS = "f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f60,f170,f171"
@@ -119,10 +120,12 @@ def main():
         raw = fetch_one(idx["secid"])
         if raw:
             q = parse(raw, idx["decimals"])
-            q["year_start"] = idx.get("year_start")
+            # 仅当 INDICES 显式配置了 year_start 时才附带（保证数据准确性）
+            if "year_start" in idx:
+                q["year_start"] = idx["year_start"]
             quotes[idx["key"]] = q
-            ytd = (q["price"] - q["year_start"]) / q["year_start"] * 100 if q.get("year_start") else None
-            ytd_str = f"  YTD={ytd:+.2f}%" if ytd is not None else "  (无年初价)"
+            ytd = (q["price"] - q["year_start"]) / q["year_start"] * 100 if "year_start" in q else None
+            ytd_str = f"  YTD={ytd:+.2f}%" if ytd is not None else "  (无YTD数据源)"
             print(f"  [{idx['name']}] {q['price']}  ({q['change_pct']:+.2f}%){ytd_str}")
         else:
             quotes[idx["key"]] = None
