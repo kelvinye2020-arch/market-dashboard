@@ -656,9 +656,9 @@
         }
 
         // ======== 东方财富实时行情（用于日韩指数）========
-        // 接口：push2.eastmoney.com，CORS 动态回显 Origin，前端可直接 fetch
+        // 接口：push2delay.eastmoney.com（2分钟延迟，从公司网络可达，比 push2 稳定）
         async function fetchEMRealtime(emSecid) {
-            const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${emSecid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f60,f170,f171&_=${Date.now()}`;
+            const url = `https://push2delay.eastmoney.com/api/qt/stock/get?secid=${emSecid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f60,f170,f171&_=${Date.now()}`;
             try {
                 const resp = await fetchWithTimeout(url, { mode: 'cors' });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
