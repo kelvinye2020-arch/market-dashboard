@@ -61,8 +61,12 @@ def fetch_binance(max_retry=3):
 def transform(klines):
     """Binance klines 行格式：[openTime_ms, o, h, l, c, vol, closeTime_ms, ...]"""
     dates, opens, highs, lows, closes = [], [], [], [], []
+    now_ms = time.time() * 1000
     for row in klines:
-        if not row or len(row) < 5:
+        if not row or len(row) < 7:
+            continue
+        # 排除尚未收盘的日K（今天这根），只保留已收盘的完整日K —— 口径统一为"最近一个完整收盘日"(T-1)
+        if row[6] > now_ms:
             continue
         ts_ms = row[0]
         date_str = datetime.datetime.fromtimestamp(ts_ms / 1000, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
