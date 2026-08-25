@@ -1230,6 +1230,7 @@
                 try {
                     const rtCodes = qqRtIndices.map(s => INDEX_META[s].qqCode);
                     const rtResults = await fetchQQRealtime(rtCodes);
+                    console.log(`[QQ] fetchQQRealtime 返回 ${Object.keys(rtResults).length} 个 keys: ${Object.keys(rtResults).join(',') || '(空)'} | hf_OIL 存在? ${!!rtResults['hf_OIL']}`);
                     qqRtIndices.forEach(secid => {
                         const meta = INDEX_META[secid];
                         const rtStr = rtResults[meta.qqCode];
@@ -1247,7 +1248,11 @@
                                     volume: rt.volume,
                                     amount: rtAmount,
                                 };
+                            } else {
+                                console.warn(`[QQ] ${secid}(${meta.qqCode}) 解析失败/price=0: rt=${JSON.stringify(rt)} | rtStr前60=${(rtStr||'').substring(0,60)}`);
                             }
+                        } else if (meta.qqCode === "hf_OIL" || (meta.qqCode && !rtStr)) {
+                            console.warn(`[QQ] ${secid}(${meta.qqCode}) rtStr 缺失! rtStr=${rtStr === undefined ? 'undefined' : (rtStr === '' ? '空串' : 'falsy')}`);
                         }
                     });
                 } catch (e) {
