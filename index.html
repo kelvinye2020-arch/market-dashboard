@@ -563,7 +563,7 @@
             "em_KS11":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", qqKline: null,        qqCode: null,        emSecid: "100.KS11" },
             "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#7c3aed", qqKline: "us.IXIC",   qqCode: "us.IXIC",   emSecid: "100.NDX" },
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX" },
-            "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: null,        emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true },
+            "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: "hf_OIL",    emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true },
             "em_AU9999": { name: "黄金AU9999",   short: "AU9999", color: "#fbbf24", qqKline: null,        qqCode: null,        emSecid: "118.AU9999", unit: "元/克",   isCommodity: true },
             "dr007":     { name: "DR007利率",    short: "DR007",  color: "#34d399", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true, yieldFile: "dr007_rate.json" },
             "cn10y":     { name: "中国10年国债",  short: "CN10Y",  color: "#a78bfa", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true, yieldFile: "cn10y_yield.json" },
@@ -652,6 +652,25 @@
                 high: parseFloat(parts[33]) || 0,
                 low: parseFloat(parts[34]) || 0,
                 amount: parseFloat(parts[37]) || 0,    // 成交额(万)
+            };
+        }
+
+        // 解析腾讯期货实时行情字符串（逗号分隔，如 hf_OIL 布伦特原油）
+        // 格式: 最新价,涨跌额,买价,卖价,最高,最低,时间,昨收,开盘,成交量,...
+        function parseQQFutureRealtime(str) {
+            if (!str || str === "") return null;
+            const parts = str.split(",");
+            if (parts.length < 13) return null;
+            const price = parseFloat(parts[0]) || 0;
+            const prevClose = parseFloat(parts[7]) || 0;
+            const change = prevClose > 0 ? (price - prevClose) : 0;
+            const changePct = prevClose > 0 ? (change / prevClose * 100) : 0;
+            return {
+                price, change, changePct,
+                high: parseFloat(parts[4]) || 0,
+                low: parseFloat(parts[5]) || 0,
+                volume: parseFloat(parts[9]) || 0,
+                amount: 0,
             };
         }
 
@@ -1073,11 +1092,17 @@
                         parsed = await tryEM();
                     }
                 } else {
-                    // 日韩/商品：只走东方财富，失败则隐藏（实时数据也来自东方财富 API）
+                    // 日韩/商品：只走东方财富K线
                     parsed = await tryEM();
                     if (!parsed) {
-                        console.warn(`[EM] ${secid} K线失败，隐藏该品种`);
-                        availableIndices.delete(secid);
+                        if (meta.qqCode) {
+                            // 实时走腾讯(如布伦特hf_OIL)：K线拿不到时保留卡片，仅显示实时价
+                            console.warn(`[EM] ${secid} K线失败，但实时走腾讯，保留卡片仅显示实时价`);
+                        } else {
+                            // 实时也走东方财富：K线失败则隐藏
+                            console.warn(`[EM] ${secid} K线失败，隐藏该品种`);
+                            availableIndices.delete(secid);
+                        }
                     }
                 }
 
@@ -1230,7 +1255,9 @@
                         const meta = INDEX_META[secid];
                         const rtStr = rtResults[meta.qqCode];
                         if (rtStr && results[secid]) {
-                            const rt = parseRealtimeStr(rtStr);
+                            // 期货代码(hf_前缀,如布伦特hf_OIL)用期货解析，股票/指数用股票解析
+                            const isFuture = (meta.qqCode || "").startsWith("hf_");
+                            const rt = isFuture ? parseQQFutureRealtime(rtStr) : parseRealtimeStr(rtStr);
                             if (rt && rt.price > 0) {
                                 const isUS = (meta.qqCode || "").startsWith("us.");
                                 const rtAmount = isUS ? 0 : rt.amount * 10000;
