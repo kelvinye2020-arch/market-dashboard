@@ -563,7 +563,7 @@
             "em_KS11":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", qqKline: null,        qqCode: null,        emSecid: "100.KS11" },
             "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#7c3aed", qqKline: "us.IXIC",   qqCode: "us.IXIC",   emSecid: "100.NDX" },
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX" },
-            "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: "hf_OIL",    emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true },
+            "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: null,        emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true },
             "em_AU9999": { name: "黄金AU9999",   short: "AU9999", color: "#fbbf24", qqKline: null,        qqCode: null,        emSecid: "118.AU9999", unit: "元/克",   isCommodity: true },
             "dr007":     { name: "DR007利率",    short: "DR007",  color: "#34d399", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true, yieldFile: "dr007_rate.json" },
             "cn10y":     { name: "中国10年国债",  short: "CN10Y",  color: "#a78bfa", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true, yieldFile: "cn10y_yield.json" },
@@ -587,47 +587,50 @@
         // JSONP 全局计数器
         let jsonpCounter = 0;
 
-        // ======== 腾讯实时行情（script 标签方式，绕 CORS） ========
-        // 注：fetch 在公司网络下被 CORS 拒绝（代理去 ACAO 头），改用 script 标签加载。
-        // 美股变量名 v_us.IXIC 带点号会抛 ReferenceError 中断 script，
-        // 解决：加载前先 window.v_us = {}，让 v_us.IXIC="..." 变成给已有对象设属性（不报错），
-        // 后续 v_hf_OIL 等正常赋值。取值时 us. 前缀从 window.v_us.XXX 取，其他从 window["v_"+code] 取。
+        // ======== 腾讯实时行情（script 标签方式 — 设置全局变量） ========
         function fetchQQRealtime(codes) {
             return new Promise((resolve, reject) => {
                 const codeList = codes.join(",");
-                // 预定义 window.v_us，让 v_us.IXIC="..." 不抛 ReferenceError
-                window.v_us = window.v_us || {};
                 const script = document.createElement("script");
                 script.src = `https://qt.gtimg.cn/q=${codeList}&t=${Date.now()}`;
+
                 const timeout = setTimeout(() => {
                     cleanup();
                     reject(new Error("Realtime timeout"));
                 }, 8000);
+
                 function cleanup() {
                     clearTimeout(timeout);
                     if (script.parentNode) script.parentNode.removeChild(script);
                 }
+
                 script.onload = function () {
                     cleanup();
+                    // 腾讯接口会在 document 中插入变量赋值: v_sh000001="1~上证指数~000001~..."
+                    // 但由于是 script 标签加载，变量会被赋值到 window 上
+                    // 不过格式是 v_xxx = "..." 这种赋值语句
+                    // 我们需要从文本中解析（但 script onload 时已经执行了）
+                    // 实际上腾讯的 response 是: v_sh000001="..."; 形式的 JS 赋值语句
+                    // 加载后会自动设置 window.v_sh000001 等变量
                     const results = {};
                     codes.forEach(code => {
-                        let val = "";
-                        if (code.startsWith("us.")) {
-                            // 美股在 window.v_us.XXX 上（v_us.IXIC 设置了 window.v_us.IXIC）
-                            val = (window.v_us && window.v_us[code.split(".")[1]]) || "";
-                        } else {
-                            val = window["v_" + code] || "";
-                        }
-                        if (typeof val === "string" && val !== "") {
-                            results[code] = val;
+                        // 腾讯变量名: v_ + code（但 . 会被替换成其他字符）
+                        // 对于 sh000001 -> v_sh000001
+                        // 对于 hkHSI -> v_hkHSI
+                        // 对于 us.IXIC -> v_us_IXIC（点号变下划线）
+                        const varName = "v_" + code.replace(/\./g, "_");
+                        if (typeof window[varName] === "string" && window[varName] !== "") {
+                            results[code] = window[varName];
                         }
                     });
                     resolve(results);
                 };
+
                 script.onerror = function () {
                     cleanup();
                     reject(new Error("Realtime script error"));
                 };
+
                 document.head.appendChild(script);
             });
         }
@@ -649,25 +652,6 @@
                 high: parseFloat(parts[33]) || 0,
                 low: parseFloat(parts[34]) || 0,
                 amount: parseFloat(parts[37]) || 0,    // 成交额(万)
-            };
-        }
-
-        // 解析腾讯期货实时行情字符串（逗号分隔，如 hf_OIL 布伦特原油）
-        // 格式: 最新价,涨跌额,买价,卖价,最高,最低,时间,昨收,开盘,成交量,...
-        function parseQQFutureRealtime(str) {
-            if (!str || str === "") return null;
-            const parts = str.split(",");
-            if (parts.length < 13) return null;
-            const price = parseFloat(parts[0]) || 0;
-            const prevClose = parseFloat(parts[7]) || 0;
-            const change = prevClose > 0 ? (price - prevClose) : 0;
-            const changePct = prevClose > 0 ? (change / prevClose * 100) : 0;
-            return {
-                price, change, changePct,
-                high: parseFloat(parts[4]) || 0,
-                low: parseFloat(parts[5]) || 0,
-                volume: parseFloat(parts[9]) || 0,
-                amount: 0,
             };
         }
 
@@ -1089,17 +1073,11 @@
                         parsed = await tryEM();
                     }
                 } else {
-                    // 日韩/商品：只走东方财富K线
+                    // 日韩/商品：只走东方财富，失败则隐藏（实时数据也来自东方财富 API）
                     parsed = await tryEM();
                     if (!parsed) {
-                        if (meta.qqCode) {
-                            // 实时走腾讯(如布伦特hf_OIL)：K线拿不到时保留卡片，仅显示实时价
-                            console.warn(`[EM] ${secid} K线失败，但实时走腾讯，保留卡片仅显示实时价`);
-                        } else {
-                            // 实时也走东方财富：K线失败则隐藏
-                            console.warn(`[EM] ${secid} K线失败，隐藏该品种`);
-                            availableIndices.delete(secid);
-                        }
+                        console.warn(`[EM] ${secid} K线失败，隐藏该品种`);
+                        availableIndices.delete(secid);
                     }
                 }
 
@@ -1252,9 +1230,7 @@
                         const meta = INDEX_META[secid];
                         const rtStr = rtResults[meta.qqCode];
                         if (rtStr && results[secid]) {
-                            // 期货代码(hf_前缀,如布伦特hf_OIL)用期货解析，股票/指数用股票解析
-                            const isFuture = (meta.qqCode || "").startsWith("hf_");
-                            const rt = isFuture ? parseQQFutureRealtime(rtStr) : parseRealtimeStr(rtStr);
+                            const rt = parseRealtimeStr(rtStr);
                             if (rt && rt.price > 0) {
                                 const isUS = (meta.qqCode || "").startsWith("us.");
                                 const rtAmount = isUS ? 0 : rt.amount * 10000;
