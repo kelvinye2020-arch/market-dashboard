@@ -587,52 +587,31 @@
         // JSONP 全局计数器
         let jsonpCounter = 0;
 
-        // ======== 腾讯实时行情（script 标签方式 — 设置全局变量） ========
+        // ======== 腾讯实时行情（fetch 文本 + 正则解析） ========
+        // 注：不能用 script 标签执行赋值——腾讯返回的美股变量名带点号(v_us.IXIC)，
+        // JS 执行会抛 ReferenceError 中断整个 script，导致其后的变量(如 hf_OIL)不被赋值。
+        // 故改为 fetch 拉文本 + 正则提取，绕开 JS 执行（腾讯接口 Access-Control-Allow-Origin: *）。
         function fetchQQRealtime(codes) {
-            return new Promise((resolve, reject) => {
-                const codeList = codes.join(",");
-                const script = document.createElement("script");
-                script.src = `https://qt.gtimg.cn/q=${codeList}&t=${Date.now()}`;
-
-                const timeout = setTimeout(() => {
-                    cleanup();
-                    reject(new Error("Realtime timeout"));
-                }, 8000);
-
-                function cleanup() {
-                    clearTimeout(timeout);
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                }
-
-                script.onload = function () {
-                    cleanup();
-                    // 腾讯接口会在 document 中插入变量赋值: v_sh000001="1~上证指数~000001~..."
-                    // 但由于是 script 标签加载，变量会被赋值到 window 上
-                    // 不过格式是 v_xxx = "..." 这种赋值语句
-                    // 我们需要从文本中解析（但 script onload 时已经执行了）
-                    // 实际上腾讯的 response 是: v_sh000001="..."; 形式的 JS 赋值语句
-                    // 加载后会自动设置 window.v_sh000001 等变量
+            const codeList = codes.join(",");
+            const url = `https://qt.gtimg.cn/q=${codeList}&t=${Date.now()}`;
+            return fetchWithTimeout(url, {}, 8000)
+                .then(resp => {
+                    if (!resp.ok) throw new Error("HTTP " + resp.status);
+                    return resp.arrayBuffer();
+                })
+                .then(buf => {
+                    // 腾讯行情接口返回 GBK 编码，用 GBK 解码避免中文乱码
+                    const text = new TextDecoder("gbk").decode(buf);
                     const results = {};
-                    codes.forEach(code => {
-                        // 腾讯变量名: v_ + code（但 . 会被替换成其他字符）
-                        // 对于 sh000001 -> v_sh000001
-                        // 对于 hkHSI -> v_hkHSI
-                        // 对于 us.IXIC -> v_us_IXIC（点号变下划线）
-                        const varName = "v_" + code.replace(/\./g, "_");
-                        if (typeof window[varName] === "string" && window[varName] !== "") {
-                            results[code] = window[varName];
-                        }
-                    });
-                    resolve(results);
-                };
-
-                script.onerror = function () {
-                    cleanup();
-                    reject(new Error("Realtime script error"));
-                };
-
-                document.head.appendChild(script);
-            });
+                    // 解析所有 v_xxx="..."; 赋值（兼容带点号的 v_us.IXIC）
+                    const re = /v_([\w.]+)="([^"]*)";/g;
+                    let m;
+                    while ((m = re.exec(text)) !== null) {
+                        // m[1] 是变量名去 v_ 前缀（如 sh000001 / us.IXIC / hf_OIL），与 meta.qqCode 一致
+                        results[m[1]] = m[2];
+                    }
+                    return results;
+                });
         }
 
         // 解析腾讯实时行情字符串
