@@ -587,31 +587,49 @@
         // JSONP 全局计数器
         let jsonpCounter = 0;
 
-        // ======== 腾讯实时行情（fetch 文本 + 正则解析） ========
-        // 注：不能用 script 标签执行赋值——腾讯返回的美股变量名带点号(v_us.IXIC)，
-        // JS 执行会抛 ReferenceError 中断整个 script，导致其后的变量(如 hf_OIL)不被赋值。
-        // 故改为 fetch 拉文本 + 正则提取，绕开 JS 执行（腾讯接口 Access-Control-Allow-Origin: *）。
+        // ======== 腾讯实时行情（script 标签方式，绕 CORS） ========
+        // 注：fetch 在公司网络下被 CORS 拒绝（代理去 ACAO 头），改用 script 标签加载。
+        // 美股变量名 v_us.IXIC 带点号会抛 ReferenceError 中断 script，
+        // 解决：加载前先 window.v_us = {}，让 v_us.IXIC="..." 变成给已有对象设属性（不报错），
+        // 后续 v_hf_OIL 等正常赋值。取值时 us. 前缀从 window.v_us.XXX 取，其他从 window["v_"+code] 取。
         function fetchQQRealtime(codes) {
-            const codeList = codes.join(",");
-            const url = `https://qt.gtimg.cn/q=${codeList}&t=${Date.now()}`;
-            return fetchWithTimeout(url, {}, 8000)
-                .then(resp => {
-                    if (!resp.ok) throw new Error("HTTP " + resp.status);
-                    return resp.arrayBuffer();
-                })
-                .then(buf => {
-                    // 腾讯行情接口返回 GBK 编码，用 GBK 解码避免中文乱码
-                    const text = new TextDecoder("gbk").decode(buf);
+            return new Promise((resolve, reject) => {
+                const codeList = codes.join(",");
+                // 预定义 window.v_us，让 v_us.IXIC="..." 不抛 ReferenceError
+                window.v_us = window.v_us || {};
+                const script = document.createElement("script");
+                script.src = `https://qt.gtimg.cn/q=${codeList}&t=${Date.now()}`;
+                const timeout = setTimeout(() => {
+                    cleanup();
+                    reject(new Error("Realtime timeout"));
+                }, 8000);
+                function cleanup() {
+                    clearTimeout(timeout);
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                }
+                script.onload = function () {
+                    cleanup();
                     const results = {};
-                    // 解析所有 v_xxx="..."; 赋值（兼容带点号的 v_us.IXIC）
-                    const re = /v_([\w.]+)="([^"]*)";/g;
-                    let m;
-                    while ((m = re.exec(text)) !== null) {
-                        // m[1] 是变量名去 v_ 前缀（如 sh000001 / us.IXIC / hf_OIL），与 meta.qqCode 一致
-                        results[m[1]] = m[2];
-                    }
-                    return results;
-                });
+                    codes.forEach(code => {
+                        let val = "";
+                        if (code.startsWith("us.")) {
+                            // 美股在 window.v_us.XXX 上（v_us.IXIC 设置了 window.v_us.IXIC）
+                            val = (window.v_us && window.v_us[code.split(".")[1]]) || "";
+                        } else {
+                            val = window["v_" + code] || "";
+                        }
+                        if (typeof val === "string" && val !== "") {
+                            results[code] = val;
+                        }
+                    });
+                    resolve(results);
+                };
+                script.onerror = function () {
+                    cleanup();
+                    reject(new Error("Realtime script error"));
+                };
+                document.head.appendChild(script);
+            });
         }
 
         // 解析腾讯实时行情字符串
@@ -1230,7 +1248,6 @@
                 try {
                     const rtCodes = qqRtIndices.map(s => INDEX_META[s].qqCode);
                     const rtResults = await fetchQQRealtime(rtCodes);
-                    console.log(`[QQ] fetchQQRealtime 返回 ${Object.keys(rtResults).length} 个 keys: ${Object.keys(rtResults).join(',') || '(空)'} | hf_OIL 存在? ${!!rtResults['hf_OIL']}`);
                     qqRtIndices.forEach(secid => {
                         const meta = INDEX_META[secid];
                         const rtStr = rtResults[meta.qqCode];
@@ -1248,11 +1265,7 @@
                                     volume: rt.volume,
                                     amount: rtAmount,
                                 };
-                            } else {
-                                console.warn(`[QQ] ${secid}(${meta.qqCode}) 解析失败/price=0: rt=${JSON.stringify(rt)} | rtStr前60=${(rtStr||'').substring(0,60)}`);
                             }
-                        } else if (meta.qqCode === "hf_OIL" || (meta.qqCode && !rtStr)) {
-                            console.warn(`[QQ] ${secid}(${meta.qqCode}) rtStr 缺失! rtStr=${rtStr === undefined ? 'undefined' : (rtStr === '' ? '空串' : 'falsy')}`);
                         }
                     });
                 } catch (e) {
