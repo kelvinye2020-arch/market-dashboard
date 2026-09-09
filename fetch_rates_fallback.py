@@ -15,12 +15,18 @@ fetch_rates_fallback.py — 利率数据取数兜底脚本（iFind MCP 不可用
      ✅ 已交叉验证：与 iFind 历史序列同日期值完全一致（2026-08-26 = 1.6887）
 
   B) DR007 加权平均利率      (iFind EDB index_id = L001619493, 单位 %, 日频 T-1)
-     ⚠️ 暂无可用公开源。已排除：
+     → Wind EDB 指标代码 M1006337（"DR007"，来源：中国货币网，日频）
+     → 走本地 Wind CLI（非 MCP）：
+         cd ~/.agents/skills/wind-mcp-skill
+         node scripts/cli.mjs call economic_data query_economic_indicator_data \
+           '{"question":"M1006337","beginDate":"2026-08-27","endDate":"2026-09-09"}'
+     ✅ 已交叉验证（2026-09-09）：Wind 2026-08-26 = 1.4282，与现有 JSON（iFind 来源）完全一致。
+     ⚠️ 走 Wind 会消耗 Wind 积分；仅在 iFind MCP 不可用时启用（自动化的兜底路径）。
+     已排除的源（勿重踩）：
         - akshare.repo_rate_hist / repo_rate_query → 是 FDR007【定盘】利率，不是 DR007【加权平均】，禁用
         - R007 (M004039736) → 全市场含非银，与 DR007 不同指标，禁用
         - chinamoney /ags/ms/cm-u-bk-ccpr/ClPr 等接口已全部 404（2026-09-06 实测）
         - 东方财富 datacenter 无 DR007 报表；push2 域名在内网被封
-     结论：DR007 仍只能走 iFind MCP，本脚本返回空。
 
 运行（必须用装了 akshare 的 venv）
   C:/Users/kelvinyye/.workbuddy/binaries/python/envs/default/Scripts/python.exe \
@@ -34,6 +40,9 @@ fetch_rates_fallback.py — 利率数据取数兜底脚本（iFind MCP 不可用
 
 import argparse
 import json
+import os
+import shutil
+import subprocess
 import sys
 from datetime import datetime, timedelta
 
@@ -79,14 +88,76 @@ def fetch_cn10y(start: str, end: str):
     return rows
 
 
+WIND_SKILL_DIR = os.path.expanduser("~/.agents/skills/wind-mcp-skill")
+WIND_DR007_CODE = "M1006337"  # Wind EDB「DR007」，来源中国货币网，日频
+
+
+def _find_node() -> str:
+    for cand in (
+        shutil.which("node"),
+        os.path.expandvars(r"%ProgramFiles%\nodejs\node.exe"),
+        r"C:/Users/kelvinyye/.workbuddy/binaries/node/versions/22.22.2-2/node.exe",
+    ):
+        if cand and os.path.exists(cand):
+            return cand
+    return ""
+
+
 def fetch_dr007(start: str, end: str):
-    """DR007 加权平均利率。当前无可用公开源，恒返回空。"""
-    print(
-        "[dr007][SKIP] 无可用公开源（FDR007/R007 均非本指标，chinamoney 接口 404）。"
-        "请走 iFind EDB MCP (index_id=L001619493)。",
-        file=sys.stderr,
+    """DR007 加权平均利率 → Wind EDB M1006337（走本地 CLI，不依赖 MCP）。"""
+    if not os.path.isdir(WIND_SKILL_DIR):
+        print(f"[dr007][SKIP] 未找到 Wind skill 目录 {WIND_SKILL_DIR}", file=sys.stderr)
+        return []
+    node = _find_node()
+    if not node:
+        print("[dr007][SKIP] 未找到可用的 node 可执行文件", file=sys.stderr)
+        return []
+
+    b, e = f"{start[:4]}-{start[4:6]}-{start[6:]}", f"{end[:4]}-{end[4:6]}-{end[6:]}"
+    payload = json.dumps(
+        {"question": WIND_DR007_CODE, "beginDate": b, "endDate": e}, ensure_ascii=False
     )
-    return []
+    try:
+        res = subprocess.run(
+            [node, "scripts/cli.mjs", "call", "economic_data",
+             "query_economic_indicator_data", payload],
+            cwd=WIND_SKILL_DIR, capture_output=True, text=True, timeout=120,
+            encoding="utf-8",
+        )
+    except Exception as ex:
+        print(f"[dr007][ERR] Wind CLI 调用异常: {ex}", file=sys.stderr)
+        return []
+
+    if res.returncode != 0:
+        print(f"[dr007][ERR] Wind CLI 退出码 {res.returncode}: "
+              f"{(res.stderr or '').strip()[:300]}", file=sys.stderr)
+        return []
+
+    try:
+        wrapper = json.loads(res.stdout)
+        inner = json.loads(wrapper["content"][0]["text"])
+        m = inner["metrics"][0]
+        name, dates, values = m["meta"]["name"], m["date"], m["value"]
+    except Exception as ex:
+        print(f"[dr007][ERR] Wind CLI 返回解析失败: {ex}; "
+              f"原始输出前 300 字: {res.stdout[:300]}", file=sys.stderr)
+        return []
+
+    if name.strip().upper() != "DR007":
+        print(f"[dr007][ERR] 指标名校验失败，取到 {name!r}，期望 DR007", file=sys.stderr)
+        return []
+
+    rows = []
+    for d, v in zip(dates, values):
+        if v is None:
+            continue
+        rows.append([f"{str(d)[:4]}-{str(d)[4:6]}-{str(d)[6:8]}", round(float(v), 4)])
+
+    rows.sort(key=lambda x: x[0])
+    print(f"[dr007][OK] 取到 {len(rows)} 条："
+          f"{rows[0][0]} ~ {rows[-1][0]}" if rows else "[dr007][WARN] Wind 返回空序列",
+          file=sys.stderr)
+    return rows
 
 
 def main():
