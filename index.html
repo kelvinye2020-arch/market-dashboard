@@ -587,50 +587,47 @@
         // JSONP 全局计数器
         let jsonpCounter = 0;
 
-        // ======== 腾讯实时行情（script 标签方式 — 设置全局变量） ========
+        // ======== 腾讯实时行情（script 标签方式，绕 CORS） ========
+        // 注：fetch 在公司网络下被 CORS 拒绝（代理去 ACAO 头），改用 script 标签加载。
+        // 美股变量名 v_us.IXIC 带点号会抛 ReferenceError 中断 script，
+        // 解决：加载前先 window.v_us = {}，让 v_us.IXIC="..." 变成给已有对象设属性（不报错），
+        // 后续 v_hf_OIL 等正常赋值。取值时 us. 前缀从 window.v_us.XXX 取，其他从 window["v_"+code] 取。
         function fetchQQRealtime(codes) {
             return new Promise((resolve, reject) => {
                 const codeList = codes.join(",");
+                // 预定义 window.v_us，让 v_us.IXIC="..." 不抛 ReferenceError
+                window.v_us = window.v_us || {};
                 const script = document.createElement("script");
                 script.src = `https://qt.gtimg.cn/q=${codeList}&t=${Date.now()}`;
-
                 const timeout = setTimeout(() => {
                     cleanup();
                     reject(new Error("Realtime timeout"));
                 }, 8000);
-
                 function cleanup() {
                     clearTimeout(timeout);
                     if (script.parentNode) script.parentNode.removeChild(script);
                 }
-
                 script.onload = function () {
                     cleanup();
-                    // 腾讯接口会在 document 中插入变量赋值: v_sh000001="1~上证指数~000001~..."
-                    // 但由于是 script 标签加载，变量会被赋值到 window 上
-                    // 不过格式是 v_xxx = "..." 这种赋值语句
-                    // 我们需要从文本中解析（但 script onload 时已经执行了）
-                    // 实际上腾讯的 response 是: v_sh000001="..."; 形式的 JS 赋值语句
-                    // 加载后会自动设置 window.v_sh000001 等变量
                     const results = {};
                     codes.forEach(code => {
-                        // 腾讯变量名: v_ + code（但 . 会被替换成其他字符）
-                        // 对于 sh000001 -> v_sh000001
-                        // 对于 hkHSI -> v_hkHSI
-                        // 对于 us.IXIC -> v_us_IXIC（点号变下划线）
-                        const varName = "v_" + code.replace(/\./g, "_");
-                        if (typeof window[varName] === "string" && window[varName] !== "") {
-                            results[code] = window[varName];
+                        let val = "";
+                        if (code.startsWith("us.")) {
+                            // 美股在 window.v_us.XXX 上（v_us.IXIC 设置了 window.v_us.IXIC）
+                            val = (window.v_us && window.v_us[code.split(".")[1]]) || "";
+                        } else {
+                            val = window["v_" + code] || "";
+                        }
+                        if (typeof val === "string" && val !== "") {
+                            results[code] = val;
                         }
                     });
                     resolve(results);
                 };
-
                 script.onerror = function () {
                     cleanup();
                     reject(new Error("Realtime script error"));
                 };
-
                 document.head.appendChild(script);
             });
         }
@@ -1073,11 +1070,12 @@
                         parsed = await tryEM();
                     }
                 } else {
-                    // 日韩/商品：只走东方财富，失败则隐藏（实时数据也来自东方财富 API）
+                    // 日韩/商品：只走东方财富K线
+                    // K线(push2his)被公司网间歇性封堵，但实时接口(push2delay)稳定可用
+                    // → K线失败不隐藏品种，保留卡片仅显示实时价（K线区域为空）
                     parsed = await tryEM();
                     if (!parsed) {
-                        console.warn(`[EM] ${secid} K线失败，隐藏该品种`);
-                        availableIndices.delete(secid);
+                        console.warn(`[EM] ${secid} K线失败，保留卡片仅显示实时价`);
                     }
                 }
 
