@@ -559,12 +559,12 @@
             "sz399006":  { name: "创业板指",     short: "CYB",    color: "#38bdf8", qqKline: "sz399006",  qqCode: "sz399006",  emSecid: "0.399006",   preferEM: true },
             "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqKline: "hkHSI",     qqCode: "hkHSI",     emSecid: "100.HSI",    preferEM: true },
             "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqKline: "hkHSTECH",  qqCode: "hkHSTECH",  emSecid: "124.HSTECH", preferEM: true },
-            "em_N225":   { name: "日经225",      short: "N225",   color: "#f472b6", qqKline: null,        qqCode: null,        emSecid: "100.N225" },
-            "em_KS11":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", qqKline: null,        qqCode: null,        emSecid: "100.KS11" },
+            "em_N225":   { name: "日经225",      short: "N225",   color: "#f472b6", qqKline: null,        qqCode: null,        emSecid: "100.N225",   klineFile: "n225_kline.json" },
+            "em_KS11":   { name: "韩国KOSPI",    short: "KOSPI",  color: "#94a3b8", qqKline: null,        qqCode: null,        emSecid: "100.KS11",   klineFile: "ks11_kline.json" },
             "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#7c3aed", qqKline: "us.IXIC",   qqCode: "us.IXIC",   emSecid: "100.NDX" },
             "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX" },
-            "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: null,        emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true },
-            "em_AU9999": { name: "黄金AU9999",   short: "AU9999", color: "#fbbf24", qqKline: null,        qqCode: null,        emSecid: "118.AU9999", unit: "元/克",   isCommodity: true },
+            "em_BRENT":  { name: "布伦特原油",   short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: null,        emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true, klineFile: "brent_kline.json" },
+            "em_AU9999": { name: "黄金AU9999",   short: "AU9999", color: "#fbbf24", qqKline: null,        qqCode: null,        emSecid: "118.AU9999", unit: "元/克",   isCommodity: true, klineFile: "au9999_kline.json" },
             "dr007":     { name: "DR007利率",    short: "DR007",  color: "#34d399", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true, yieldFile: "dr007_rate.json" },
             "cn10y":     { name: "中国10年国债",  short: "CN10Y",  color: "#a78bfa", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true, yieldFile: "cn10y_yield.json" },
             "crypto_BTC":{ name: "比特币",       short: "BTC",    color: "#f97316", qqKline: null,        qqCode: null,        emSecid: null,         unit: "USD",     isCrypto: true },
@@ -838,6 +838,54 @@
             return null;
         }
 
+        // ======== 本地静态K线JSON（Wind后端每日预取，EM push2his被封的替代源）========
+        // beginDate/endDate 格式 yyyyMMdd（与 getRangeDates 输出一致）；JSON dates 为 yyyy-MM-dd
+        async function fetchLocalKline(file, beginDate, endDate) {
+            const url = `${file}?_=${Math.floor(Date.now()/60000)}`; // 1分钟缓存
+            const resp = await fetchWithTimeout(url, {}, 5000);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const json = await resp.json();
+            if (!json || !json.dates || json.dates.length === 0) throw new Error("empty");
+            const b = `${beginDate.slice(0,4)}-${beginDate.slice(4,6)}-${beginDate.slice(6,8)}`;
+            const e = `${endDate.slice(0,4)}-${endDate.slice(4,6)}-${endDate.slice(6,8)}`;
+            const dates = [], opens = [], highs = [], lows = [], closes = [];
+            for (let i = 0; i < json.dates.length; i++) {
+                const d = json.dates[i];
+                if (d >= b && d <= e) {
+                    dates.push(d); opens.push(json.opens[i]); highs.push(json.highs[i]);
+                    lows.push(json.lows[i]); closes.push(json.closes[i]);
+                }
+            }
+            if (dates.length === 0) throw new Error("no data in range");
+            return { dates, opens, highs, lows, closes };
+        }
+
+        // 今日bar拟合：把实时行情(开/高/低/现价)拼进K线数组（末条=今天则更新，早于今天则追加）
+        // rt 需含 open/high/low/price/amount（来自 EM 实时解析或 realtime 对象）
+        function mergeTodayBar(r, rt) {
+            if (!r || !r.dates || r.dates.length === 0 || !rt || !(rt.open > 0)) return;
+            const _now = new Date();
+            const todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,"0")}-${String(_now.getDate()).padStart(2,"0")}`;
+            const lastDate = r.dates[r.dates.length - 1];
+            if (lastDate === todayStr) {
+                const i = r.dates.length - 1;
+                r.closes[i] = rt.price;
+                r.highs[i] = Math.max(r.highs[i], rt.high || rt.price);
+                r.lows[i] = Math.min(r.lows[i], rt.low || rt.price);
+            } else if (lastDate < todayStr) {
+                const prevClose = r.closes[r.closes.length - 1];
+                r.dates.push(todayStr);
+                r.opens.push(rt.open);
+                r.highs.push(rt.high || rt.price);
+                r.lows.push(rt.low || rt.price);
+                r.closes.push(rt.price);
+                (r.volumes = r.volumes || []).push(0);
+                (r.amounts = r.amounts || []).push(rt.amount || 0);
+                (r.changes = r.changes || []).push(rt.price - prevClose);
+                (r.change_pcts = r.change_pcts || []).push(prevClose > 0 ? (rt.price - prevClose) / prevClose * 100 : 0);
+            }
+        }
+
         // 解析东方财富K线数据
         function parseEMKlineData(klines, secid) {
             if (!klines || klines.length === 0) return null;
@@ -1057,6 +1105,32 @@
                     return null;
                 };
 
+                // 辅助函数：尝试本地静态JSON（Wind后端每日预取）
+                const tryLocal = async () => {
+                    if (!meta.klineFile) return null;
+                    try {
+                        const k = await fetchLocalKline(meta.klineFile, beginDate, endDate);
+                        const p = {
+                            name: meta.name, code: meta.short, secid: secid, short: meta.short,
+                            dates: k.dates, opens: k.opens, closes: k.closes, highs: k.highs, lows: k.lows,
+                            volumes: k.dates.map(() => 0), amounts: k.dates.map(() => 0),
+                            changes: [], change_pcts: [], klineSource: "local",
+                        };
+                        for (let i = 0; i < p.dates.length; i++) {
+                            const prev = i > 0 ? p.closes[i - 1] : p.closes[i];
+                            p.changes.push(p.closes[i] - prev);
+                            p.change_pcts.push(prev > 0 ? (p.closes[i] - prev) / prev * 100 : 0);
+                        }
+                        if (p.dates.length > 0) {
+                            console.log(`[LOCAL] ${secid} 本地K线成功: ${p.dates.length}天 (${p.dates[0]}~${p.dates[p.dates.length-1]})`);
+                            return p;
+                        }
+                    } catch (e) {
+                        console.warn(`[LOCAL] ${secid} 本地K线失败: ${e.message}`);
+                    }
+                    return null;
+                };
+
                 if (meta.preferEM) {
                     // A股/港股：东方财富优先（有成交额），腾讯备用
                     parsed = await tryEM();
@@ -1072,19 +1146,23 @@
                         parsed = await tryEM();
                     }
                 } else {
-                    // 日韩/商品：只走东方财富K线
-                    // K线(push2his)被公司网间歇性封堵，但实时接口(push2delay)稳定可用
-                    // → K线失败不隐藏品种，保留卡片仅显示实时价（K线区域为空）
-                    parsed = await tryEM();
+                    // 日韩/商品：本地JSON(Wind预取)优先 → EM(push2his,公司网被封基本失败)兜底
+                    // 都失败不隐藏品种，保留卡片仅显示实时价
+                    parsed = await tryLocal();
+                    if (!parsed) parsed = await tryEM();
                     if (!parsed) {
-                        console.warn(`[EM] ${secid} K线失败，保留卡片仅显示实时价`);
+                        console.warn(`[EM] ${secid} K线全部失败，保留卡片仅显示实时价`);
                     }
                 }
 
                 // 覆盖前保留已注入的 realtime（实时可能先于K线完成，不能被 emptyResult/parsed 抹掉）
                 const prevRt = results[secid] && results[secid].realtime;
                 results[secid] = parsed || emptyResult;
-                if (prevRt) results[secid].realtime = prevRt;
+                if (prevRt) {
+                    results[secid].realtime = prevRt;
+                    // K线后完成：此时 dates 已有数据，补拼今日bar（实时先完成时 dates 为空会漏拼）
+                    mergeTodayBar(results[secid], prevRt);
+                }
             });
 
             // 1b. 比特币K线（CoinGecko 独立路径）
@@ -1275,7 +1353,12 @@
                                 change_pct: rt.changePct,
                                 volume: rt.volume,
                                 amount: rt.amount,
+                                open: rt.open,   // 供今日bar拟合（K线后完成时也能补拼）
+                                high: rt.high,
+                                low: rt.low,
                             };
+                            // 今日bar拟合（K线已完成、dates 已有数据时立即拼；否则由K线完成处补拼）
+                            mergeTodayBar(results[secid], rt);
                         }
                         console.log(`[EM] ${secid} 实时数据成功: 价格=${rt.price}`);
                     } else {
