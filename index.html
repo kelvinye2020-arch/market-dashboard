@@ -1018,6 +1018,8 @@
                     volumes: [], amounts: [], changes: [], change_pcts: [],
                     noKlineData: true,
                 };
+                // 预先初始化，确保实时数据注入时 results[secid] 已存在（与 BTC 分支一致，堵时序竞争）
+                results[secid] = emptyResult;
 
                 let parsed = null;
 
@@ -1079,7 +1081,10 @@
                     }
                 }
 
+                // 覆盖前保留已注入的 realtime（实时可能先于K线完成，不能被 emptyResult/parsed 抹掉）
+                const prevRt = results[secid] && results[secid].realtime;
                 results[secid] = parsed || emptyResult;
+                if (prevRt) results[secid].realtime = prevRt;
             });
 
             // 1b. 比特币K线（CoinGecko 独立路径）
@@ -1254,15 +1259,13 @@
                 try {
                     const meta = INDEX_META[secid];
                     let rt = null;
-                    // 主力：push2delay
-                    try {
-                        rt = await fetchEMRealtime(meta.emSecid);
-                    } catch (e) { /* 静默 */ }
-                    // 兜底：push2（1.5s 后启用，或 push2delay 失败后立即启用）
-                    if (!rt || rt.price <= 0) {
-                        try {
-                            rt = await fetchEMRealtimePush2(meta.emSecid);
-                        } catch (e) { /* 静默 */ }
+                    // 概率性封堵：push2delay→push2 交替重试 2 轮（间隔1.5s），提高成功率
+                    for (let attempt = 0; attempt < 2; attempt++) {
+                        try { rt = await fetchEMRealtime(meta.emSecid); } catch (e) { /* 静默 */ }
+                        if (rt && rt.price > 0) break;
+                        try { rt = await fetchEMRealtimePush2(meta.emSecid); } catch (e) { /* 静默 */ }
+                        if (rt && rt.price > 0) break;
+                        if (attempt < 1) await new Promise(r => setTimeout(r, 1500));
                     }
                     if (rt && rt.price > 0) {
                         if (results[secid]) {
