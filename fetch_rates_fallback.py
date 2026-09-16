@@ -44,6 +44,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta
 
 
@@ -90,6 +91,10 @@ def fetch_cn10y(start: str, end: str):
 
 WIND_SKILL_DIR = os.path.expanduser("~/.agents/skills/wind-mcp-skill")
 WIND_DR007_CODE = "M1006337"  # Wind EDB「DR007」，来源中国货币网，日频
+# Wind CLI 偶发瞬时失败（2026-09-16 实测：首次退出码 1 且 stderr 为空，重试即成功），
+# 故对 CLI 调用做重试，避免因一次抖动就判定"取数为空"。
+WIND_CLI_RETRIES = 3
+WIND_CLI_RETRY_SLEEP = 3
 
 
 def _find_node() -> str:
@@ -117,20 +122,32 @@ def fetch_dr007(start: str, end: str):
     payload = json.dumps(
         {"question": WIND_DR007_CODE, "beginDate": b, "endDate": e}, ensure_ascii=False
     )
-    try:
-        res = subprocess.run(
-            [node, "scripts/cli.mjs", "call", "economic_data",
-             "query_economic_indicator_data", payload],
-            cwd=WIND_SKILL_DIR, capture_output=True, text=True, timeout=120,
-            encoding="utf-8",
-        )
-    except Exception as ex:
-        print(f"[dr007][ERR] Wind CLI 调用异常: {ex}", file=sys.stderr)
-        return []
+    res = None
+    for attempt in range(1, WIND_CLI_RETRIES + 1):
+        try:
+            r = subprocess.run(
+                [node, "scripts/cli.mjs", "call", "economic_data",
+                 "query_economic_indicator_data", payload],
+                cwd=WIND_SKILL_DIR, capture_output=True, text=True, timeout=120,
+                encoding="utf-8",
+            )
+        except Exception as ex:
+            print(f"[dr007][WARN] 第 {attempt}/{WIND_CLI_RETRIES} 次 Wind CLI 调用异常: {ex}",
+                  file=sys.stderr)
+            time.sleep(WIND_CLI_RETRY_SLEEP)
+            continue
 
-    if res.returncode != 0:
-        print(f"[dr007][ERR] Wind CLI 退出码 {res.returncode}: "
-              f"{(res.stderr or '').strip()[:300]}", file=sys.stderr)
+        if r.returncode == 0 and (r.stdout or "").strip():
+            res = r
+            break
+        print(f"[dr007][WARN] 第 {attempt}/{WIND_CLI_RETRIES} 次 Wind CLI 失败 "
+              f"(退出码 {r.returncode}): {(r.stderr or '').strip()[:200]}",
+              file=sys.stderr)
+        time.sleep(WIND_CLI_RETRY_SLEEP)
+
+    if res is None:
+        print(f"[dr007][ERR] Wind CLI 连续 {WIND_CLI_RETRIES} 次失败，本次跳过 dr007",
+              file=sys.stderr)
         return []
 
     try:
