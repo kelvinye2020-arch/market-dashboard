@@ -36,7 +36,7 @@ NODE_CANDIDATES = [
 ]
 
 FULL_BEGIN = "2020-01-01"      # 全量起点（用户确认：从20年1月起）
-INCR_DAYS = 15                 # 增量回看天数（覆盖节假日/漏跑）
+INCR_DAYS = 30                 # 增量回看天数（覆盖节假日/漏跑/长假不开机；2026-09-17 由 15 上调）
 
 INDICES = {
     "n225":   {"windcode": "N225.GI",   "file": "n225_kline.json",   "name": "日经225",     "unit": "点",     "lo": 10000, "hi": 100000},
