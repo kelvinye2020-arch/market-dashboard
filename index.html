@@ -259,6 +259,7 @@
         .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
         .card-name { font-size: 14px; font-weight: 600; }
         .card-code { font-size: 11px; color: var(--text-muted); background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; }
+        .stale-badge { display: inline-block; vertical-align: middle; margin-left: 6px; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; line-height: 1.4; cursor: help; }
         .card-price { font-size: 26px; font-weight: 700; margin-bottom: 6px; font-feature-settings: 'tnum'; letter-spacing: -0.5px; }
         .card-change { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 500; }
         .card-change span { display: flex; align-items: center; gap: 3px; }
@@ -1362,12 +1363,11 @@
                         }
                         console.log(`[EM] ${secid} 实时数据成功: 价格=${rt.price}`);
                     } else {
-                        console.warn(`[EM] ${secid} 东方财富双端点均失败，隐藏该品种`);
-                        availableIndices.delete(secid);
+                        // 不在此处隐藏：等 K线 也完成后统一判定（有本地K线则降级显示收盘价）
+                        console.warn(`[EM] ${secid} 东方财富双端点均失败，待本地K线兜底`);
                     }
                 } catch (e) {
-                    console.warn(`[EM] ${secid} 异常:`, e);
-                    availableIndices.delete(secid);
+                    console.warn(`[EM] ${secid} 实时异常，待本地K线兜底:`, e);
                 }
             });
 
@@ -1402,6 +1402,19 @@
 
             // K线 + 实时行情全部并发等待
             await Promise.all([...klinePromises, cryptoKlinePromise, ...yieldKlinePromises, qqRtPromise, ...emRtPromises, cryptoRtPromise]);
+
+            // EM 品种可见性统一判定：实时 或 K线 任一有数据就显示；两者皆无才隐藏（不出空数据卡）
+            emOnlyIndices.forEach(secid => {
+                const r = results[secid];
+                const hasRt = !!(r && r.realtime && r.realtime.price > 0);
+                const hasK = !!(r && r.closes && r.closes.length > 0);
+                if (!hasRt && !hasK) {
+                    console.warn(`[EM] ${secid} 实时与K线均无数据，隐藏该品种`);
+                    availableIndices.delete(secid);
+                } else if (!hasRt) {
+                    console.log(`[EM] ${secid} 实时不可用，降级显示本地收盘价 (${r.dates[r.dates.length - 1]})`);
+                }
+            });
 
             // 后处理：如果BTC实时数据来自Coinbase（无涨跌幅），用K线最近一天的close作为prevClose计算涨跌幅
             if (results["crypto_BTC"] && results["crypto_BTC"].realtime && results["crypto_BTC"].realtime.change_pct === 0) {
@@ -1762,6 +1775,15 @@
 
                 // 单位标注（商品/加密货币/收益率）
                 const unitBadge = meta.unit ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:4px">${meta.unit}</span>` : "";
+                // EM 品种实时不可用 → 用本地K线末根收盘渲染，加「收盘 MM/DD」角标
+                const isEmOnly = !meta.qqCode && !meta.isCrypto && !!meta.emSecid;
+                const hasRealtime = !!(data.realtime && data.realtime.price > 0);
+                let staleBadge = "";
+                if (isEmOnly && !hasRealtime && closes.length > 0) {
+                    const lastD = (data.dates || [])[data.dates.length - 1] || "";
+                    const md = lastD.length >= 10 ? `${lastD.slice(5, 7)}/${lastD.slice(8, 10)}` : lastD;
+                    staleBadge = `<span class="stale-badge" title="实时行情暂不可用，显示 ${lastD} 收盘价">收盘 ${md}</span>`;
+                }
                 // 价格格式化：比特币用整数，收益率保留4位小数，其他保留小数
                 let priceStr;
                 if (meta.isCrypto) {
@@ -1810,7 +1832,7 @@
                         <span class="card-name">${meta.name}</span>
                         <span class="card-code">${meta.short}</span>
                     </div>
-                    <div class="card-price ${colorClass}">${priceStr}${unitBadge}</div>
+                    <div class="card-price ${colorClass}">${priceStr}${unitBadge}${staleBadge}</div>
                     <div class="card-change">
                         <span class="${colorClass}">
                             ${isUp ? "&#9650;" : dayChangePct < 0 ? "&#9660;" : "&#9644;"}
