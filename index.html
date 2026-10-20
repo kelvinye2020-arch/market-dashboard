@@ -1168,6 +1168,12 @@
                 // 覆盖前保留已注入的 realtime（实时可能先于K线完成，不能被 emptyResult/parsed 抹掉）
                 const prevRt = results[secid] && results[secid].realtime;
                 results[secid] = parsed || emptyResult;
+                // 记录K线原始末根：mergeTodayBar 会把末根改/补成今日实时价，
+                // 之后无法再区分"收盘价"与"盘中实时价"，口径判断必须用原始值
+                if (results[secid].dates && results[secid].dates.length > 0) {
+                    results[secid].klineLastDate = results[secid].dates[results[secid].dates.length - 1];
+                    results[secid].klineLastClose = results[secid].closes[results[secid].closes.length - 1];
+                }
                 if (prevRt) {
                     results[secid].realtime = prevRt;
                     // K线后完成：此时 dates 已有数据，补拼今日bar（实时先完成时 dates 为空会漏拼）
@@ -1790,8 +1796,9 @@
                 const hasRealtime = !!(data.realtime && data.realtime.price > 0);
                 let staleBadge = "";
                 if (isEmOnly && closes.length > 0) {
-                    const lastD = (data.dates || [])[data.dates.length - 1] || "";
-                    const lastC = closes[closes.length - 1];
+                    // 口径判断必须用 K线原始末根（klineLastDate/Close），不能用已被今日实时bar覆盖的 closes 末条
+                    const lastD = data.klineLastDate || (data.dates || [])[data.dates.length - 1] || "";
+                    const lastC = (data.klineLastClose != null) ? data.klineLastClose : closes[closes.length - 1];
                     const rtIsLastClose = hasRealtime && lastC > 0 && Math.abs(data.realtime.price - lastC) / lastC < 0.0005;
                     if (!hasRealtime || rtIsLastClose) {
                         const md = lastD.length >= 10 ? `${lastD.slice(5, 7)}/${lastD.slice(8, 10)}` : lastD;
