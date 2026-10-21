@@ -532,15 +532,17 @@
     <!-- 底部来源标识 -->
     <footer class="footer">
         <div class="f-row"><span class="f-label">数据来源：</span><span>东方财富（实时行情）· 腾讯财经（A股/港股/美股）· CoinGecko（比特币）· Wind 预取日K（日经/KOSPI/布伦特/黄金）· 中债网/中国货币网（利率）</span></div>
-        <div class="f-row"><span class="f-label">数据口径：</span><span>非交易时段或实时不可用时，部分品种显示最近交易日收盘价，见卡片「收盘 MM/DD」角标；布伦特原油取数时仍在交易，显示「盘中价 MM/DD」（ICE 结算价北京次日 02:30 前后确定，次日自动修正为收盘价）。鼠标悬停可看交易所与日期明细</span></div>
+        <div class="f-row"><span class="f-label">数据口径：</span><span>非交易时段或实时不可用时，部分品种显示最近交易日收盘价，见卡片「收盘 MM/DD」角标；布伦特原油取数时仍在交易，显示「盘中价 MM/DD」（ICE 结算价北京次日 02:30 前后确定，次日自动修正为收盘价）；比特币 7×24 交易，实时不可用时显示「截至 MM/DD」（按 UTC 日切）。鼠标悬停可看交易所与日期明细</span></div>
         <div class="f-div"></div>
-        <div class="f-row"><span>仅供参考，不构成投资建议</span><span>·</span><span>页面每次打开自动刷新最新数据</span><span>·</span><span>v4.7</span></div>
+        <div class="f-row"><span>仅供参考，不构成投资建议</span><span>·</span><span>页面每次打开自动刷新最新数据</span><span>·</span><span>v4.8</span></div>
     </footer>
 
     <script>
         // ============================================================
-        //  全球指数智能看板 v4.7 — EM品种降级显示收盘价（不隐藏卡片）+ 口径角标
+        //  全球指数智能看板 v4.8 — EM品种降级显示收盘价（不隐藏卡片）+ 口径角标
         //  v4.7：布伦特当日bar为盘中快照（17:40取数时ICE仍在交易），角标改显示「盘中价 MM/DD」
+        //  v4.8：比特币涨跌幅基准改为"最近一个已完成交易日收盘"（原 closes[-2] 会把一天涨成两天）；
+        //        BTC 实时不可用时不再隐藏卡片，降级显示K线收盘价 + 「截至 MM/DD」角标
         //  K线: A/港股→东方财富优先（有成交额），腾讯备用
         //       美股→腾讯优先，东方财富备用
         //       日经/KOSPI/布伦特/黄金AU9999→Wind预取本地JSON（17:40自动化更新），东财K线兜底
@@ -900,6 +902,18 @@
                 (r.changes = r.changes || []).push(rt.price - prevClose);
                 (r.change_pcts = r.change_pcts || []).push(prevClose > 0 ? (rt.price - prevClose) / prevClose * 100 : 0);
             }
+        }
+
+        // 比特币涨跌幅基准：返回【最近一个已完成交易日】的收盘价下标
+        // BTC 日K按 UTC 0 点切日，本地JSON/CoinGecko 只保留已完成日（末根通常是昨天）；
+        // 若末根恰好是当天（未走完的bar）才往前退一根。旧实现固定用 closes[-2]，
+        // 在无当日bar时会退成"前天收盘"，把一天涨幅算成两天涨幅。
+        function lastCompletedCloseIndex(d) {
+            if (!d || !d.closes || d.closes.length === 0) return -1;
+            const utcToday = new Date().toISOString().slice(0, 10);
+            let i = d.closes.length - 1;
+            if (i >= 0 && (d.dates || [])[i] === utcToday) i -= 1;
+            return i >= 0 ? i : -1;
         }
 
         // 解析东方财富K线数据
@@ -1413,12 +1427,11 @@
                         }
                         console.log(`[BTC] 实时数据成功(${rt.source}): $${rt.price}`);
                     } else {
-                        console.warn("[BTC] 实时数据全部失败，隐藏BTC卡片");
-                        availableIndices.delete("crypto_BTC");
+                        // 与EM品种同原则：有K线就不隐藏，降级显示最近一个完整交易日收盘价（卡片带「截至 MM/DD」角标）
+                        console.warn("[BTC] 实时数据全部失败，改为降级显示K线收盘价");
                     }
                 } catch (e) {
                     console.warn("[BTC] 实时获取异常:", e);
-                    availableIndices.delete("crypto_BTC");
                 }
             })();
 
@@ -1438,19 +1451,32 @@
                 }
             });
 
+            // BTC 可见性统一判定（与EM同原则）：实时 或 K线 任一有数据就显示；两者皆无才隐藏
+            {
+                const r = results["crypto_BTC"];
+                const hasRt = !!(r && r.realtime && r.realtime.price > 0);
+                const hasK = !!(r && r.closes && r.closes.length > 0);
+                if (!hasRt && !hasK) {
+                    console.warn("[BTC] 实时与K线均无数据，隐藏该品种");
+                    availableIndices.delete("crypto_BTC");
+                } else if (!hasRt) {
+                    console.log(`[BTC] 实时不可用，降级显示K线收盘价 (${r.dates[r.dates.length - 1]})`);
+                }
+            }
+
             // 后处理：如果BTC实时数据来自Coinbase（无涨跌幅），用K线最近一天的close作为prevClose计算涨跌幅
             if (results["crypto_BTC"] && results["crypto_BTC"].realtime && results["crypto_BTC"].realtime.change_pct === 0) {
-                const closes = results["crypto_BTC"].closes;
-                if (closes && closes.length >= 2) {
-                    // 用倒数第二天的close作为prevClose（最后一天可能是今天不完整的）
-                    const prevClose = closes[closes.length - 2];
+                // 基准 = 最近一个已完成交易日的收盘（BTC无当日bar时不能用 closes[-2]，否则算成两天涨幅）
+                const bi = lastCompletedCloseIndex(results["crypto_BTC"]);
+                if (bi >= 0) {
+                    const prevClose = results["crypto_BTC"].closes[bi];
                     const curPrice = results["crypto_BTC"].realtime.price;
                     if (prevClose > 0 && curPrice > 0) {
                         const change = curPrice - prevClose;
                         const changePct = (change / prevClose) * 100;
                         results["crypto_BTC"].realtime.change = change;
                         results["crypto_BTC"].realtime.change_pct = changePct;
-                        console.log(`[BTC] 涨跌幅补算: prevClose=${prevClose}, change=${change.toFixed(2)}, pct=${changePct.toFixed(2)}%`);
+                        console.log(`[BTC] 涨跌幅补算: 基准=${results["crypto_BTC"].dates[bi]} prevClose=${prevClose}, change=${change.toFixed(2)}, pct=${changePct.toFixed(2)}%`);
                     }
                 }
             }
@@ -1724,11 +1750,11 @@
                             volume: rt.volume,
                             amount: 0,
                         };
-                        // Coinbase无涨跌幅，用K线补算
+                        // Coinbase无涨跌幅，用K线补算（基准=最近一个已完成交易日收盘）
                         if (pct === 0) {
-                            const closes = allData["crypto_BTC"].closes;
-                            if (closes && closes.length >= 2) {
-                                const prevClose = closes[closes.length - 2];
+                            const bi = lastCompletedCloseIndex(allData["crypto_BTC"]);
+                            if (bi >= 0) {
+                                const prevClose = allData["crypto_BTC"].closes[bi];
                                 if (prevClose > 0) {
                                     const chg = rt.price - prevClose;
                                     allData["crypto_BTC"].realtime.change = chg;
@@ -1802,6 +1828,13 @@
                 const isEmOnly = !meta.qqCode && !meta.isCrypto && !!meta.emSecid;
                 const hasRealtime = !!(data.realtime && data.realtime.price > 0);
                 let staleBadge = "";
+                // 比特币：7×24 交易，没有"收盘"概念。实时双源都不可用时，用K线末根
+                // （最近一个完整UTC交易日）顶上，标「截至 MM/DD」，避免被误认为实时价
+                if (meta.isCrypto && !hasRealtime && closes.length > 0) {
+                    const cd = (data.dates || [])[data.dates.length - 1] || "";
+                    const cmd = cd.length >= 10 ? `${cd.slice(5, 7)}/${cd.slice(8, 10)}` : cd;
+                    staleBadge = `<span class="stale-badge" title="实时接口（Coinbase/blockchain.info）暂不可用，显示的是最近一个完整交易日（${cd}，按UTC日切）的收盘价，非实时价">截至 ${cmd}</span>`;
+                }
                 if (isEmOnly && closes.length > 0) {
                     // 口径判断必须用 K线原始末根（klineLastDate/Close），不能用已被今日实时bar覆盖的 closes 末条
                     const lastD = data.klineLastDate || (data.dates || [])[data.dates.length - 1] || "";
