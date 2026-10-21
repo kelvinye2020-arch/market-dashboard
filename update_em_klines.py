@@ -38,11 +38,17 @@ NODE_CANDIDATES = [
 FULL_BEGIN = "2020-01-01"      # 全量起点（用户确认：从20年1月起）
 INCR_DAYS = 30                 # 增量回看天数（覆盖节假日/漏跑/长假不开机；2026-09-17 由 15 上调）
 
+# intraday_at_fetch: 17:40 取数时该市场是否仍在交易
+#   True  → 末根是盘中快照，写入 unsettled_date，前端角标显示「盘中价 MM/DD」而非「收盘 MM/DD」
+#   False → 取数时已收盘（东京14:00 / 首尔14:30 / 上金所日盘15:30，均早于17:40），末根即真实收盘
+# ICE 布伦特结算窗口 19:28-19:30 伦敦时间 ≈ 北京次日 02:28-02:30（夏令时）/ 03:28-03:30（冬令时）
+INTRADAY_NOTE = "取数时仍在交易，当日bar为盘中快照；结算价北京次日02:30前后确定，次日回看30天自动修正为真收盘"
+
 INDICES = {
-    "n225":   {"windcode": "N225.GI",   "file": "n225_kline.json",   "name": "日经225",     "unit": "点",     "lo": 10000, "hi": 100000},
-    "ks11":   {"windcode": "KS11.GI",   "file": "ks11_kline.json",   "name": "韩国KOSPI",   "unit": "点",     "lo": 1000,  "hi": 10000},
-    "brent":  {"windcode": "布伦特原油", "file": "brent_kline.json",  "name": "布伦特原油", "unit": "美元/桶", "lo": 5,     "hi": 500},
-    "au9999": {"windcode": "AU9999",    "file": "au9999_kline.json", "name": "黄金AU9999",  "unit": "元/克",  "lo": 100,   "hi": 2000},
+    "n225":   {"windcode": "N225.GI",   "file": "n225_kline.json",   "name": "日经225",     "unit": "点",     "lo": 10000, "hi": 100000, "intraday_at_fetch": False},
+    "ks11":   {"windcode": "KS11.GI",   "file": "ks11_kline.json",   "name": "韩国KOSPI",   "unit": "点",     "lo": 1000,  "hi": 10000,  "intraday_at_fetch": False},
+    "brent":  {"windcode": "布伦特原油", "file": "brent_kline.json",  "name": "布伦特原油", "unit": "美元/桶", "lo": 5,     "hi": 500,    "intraday_at_fetch": True},
+    "au9999": {"windcode": "AU9999",    "file": "au9999_kline.json", "name": "黄金AU9999",  "unit": "元/克",  "lo": 100,   "hi": 2000,   "intraday_at_fetch": False},
 }
 
 
@@ -157,6 +163,10 @@ def update_one(key, cfg, full):
         "name": cfg["name"],
         "unit": cfg["unit"],
         "windcode": cfg["windcode"],
+        # 末根是否为盘中快照（仅布伦特：17:40 取数时 ICE 仍在交易）
+        # 前端据此把角标写成「盘中价 MM/DD」，避免把盘中价叫成收盘价；次日数据覆盖后此字段自动清空
+        "unsettled_date": (dates[-1] if (cfg.get("intraday_at_fetch") and dates[-1] == today.strftime("%Y-%m-%d")) else ""),
+        "intraday_note": (INTRADAY_NOTE if cfg.get("intraday_at_fetch") else ""),
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))

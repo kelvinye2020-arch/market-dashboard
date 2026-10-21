@@ -532,14 +532,15 @@
     <!-- 底部来源标识 -->
     <footer class="footer">
         <div class="f-row"><span class="f-label">数据来源：</span><span>东方财富（实时行情）· 腾讯财经（A股/港股/美股）· CoinGecko（比特币）· Wind 预取日K（日经/KOSPI/布伦特/黄金）· 中债网/中国货币网（利率）</span></div>
-        <div class="f-row"><span class="f-label">数据口径：</span><span>非交易时段或实时不可用时，部分品种显示最近交易日收盘价，见卡片「收盘 MM/DD」角标，鼠标悬停可看交易所与日期明细</span></div>
+        <div class="f-row"><span class="f-label">数据口径：</span><span>非交易时段或实时不可用时，部分品种显示最近交易日收盘价，见卡片「收盘 MM/DD」角标；布伦特原油取数时仍在交易，显示「盘中价 MM/DD」（ICE 结算价北京次日 02:30 前后确定，次日自动修正为收盘价）。鼠标悬停可看交易所与日期明细</span></div>
         <div class="f-div"></div>
-        <div class="f-row"><span>仅供参考，不构成投资建议</span><span>·</span><span>页面每次打开自动刷新最新数据</span><span>·</span><span>v4.6</span></div>
+        <div class="f-row"><span>仅供参考，不构成投资建议</span><span>·</span><span>页面每次打开自动刷新最新数据</span><span>·</span><span>v4.7</span></div>
     </footer>
 
     <script>
         // ============================================================
-        //  全球指数智能看板 v4.6 — EM品种降级显示收盘价（不隐藏卡片）+ 口径角标
+        //  全球指数智能看板 v4.7 — EM品种降级显示收盘价（不隐藏卡片）+ 口径角标
+        //  v4.7：布伦特当日bar为盘中快照（17:40取数时ICE仍在交易），角标改显示「盘中价 MM/DD」
         //  K线: A/港股→东方财富优先（有成交额），腾讯备用
         //       美股→腾讯优先，东方财富备用
         //       日经/KOSPI/布伦特/黄金AU9999→Wind预取本地JSON（17:40自动化更新），东财K线兜底
@@ -867,7 +868,12 @@
                 }
             }
             if (dates.length === 0) throw new Error("no data in range");
-            return { dates, opens, highs, lows, closes };
+            return {
+                dates, opens, highs, lows, closes,
+                // 末根是否为盘中快照（仅布伦特：17:40 取数时 ICE 仍在交易）
+                unsettledDate: json.unsettled_date || "",
+                intradayNote: json.intraday_note || "",
+            };
         }
 
         // 今日bar拟合：把实时行情(开/高/低/现价)拼进K线数组（末条=今天则更新，早于今天则追加）
@@ -1125,6 +1131,7 @@
                             dates: k.dates, opens: k.opens, closes: k.closes, highs: k.highs, lows: k.lows,
                             volumes: k.dates.map(() => 0), amounts: k.dates.map(() => 0),
                             changes: [], change_pcts: [], klineSource: "local",
+                            unsettledDate: k.unsettledDate || "", intradayNote: k.intradayNote || "",
                         };
                         for (let i = 0; i < p.dates.length; i++) {
                             const prev = i > 0 ? p.closes[i - 1] : p.closes[i];
@@ -1803,7 +1810,14 @@
                     if (!hasRealtime || rtIsLastClose) {
                         const md = lastD.length >= 10 ? `${lastD.slice(5, 7)}/${lastD.slice(8, 10)}` : lastD;
                         const venue = meta.venue ? `，${meta.venue}` : "";
-                        staleBadge = `<span class="stale-badge" title="显示的是最近交易日（${lastD}）的收盘价${venue}，非盘中实时价">收盘 ${md}</span>`;
+                        // 布伦特：17:40 取数时 ICE 仍在交易，末根是盘中快照，不能叫"收盘"
+                        // 结算价在北京次日 02:28-02:30 才定，次日 17:40 回看30天会用新数据覆盖同日期并自动修正
+                        const isIntradayBar = !!data.unsettledDate && data.unsettledDate === lastD;
+                        if (isIntradayBar) {
+                            staleBadge = `<span class="stale-badge" title="${lastD} 当日尚未收盘：显示的是取数时刻的盘中价${venue}。ICE布伦特结算价在北京次日02:28-02:30（夏令时）确定，次日自动更新为收盘价">盘中价 ${md}</span>`;
+                        } else {
+                            staleBadge = `<span class="stale-badge" title="显示的是最近交易日（${lastD}）的收盘价${venue}，非盘中实时价">收盘 ${md}</span>`;
+                        }
                     }
                 }
                 // 价格格式化：比特币用整数，收益率保留4位小数，其他保留小数
