@@ -15,13 +15,19 @@ fetch_rates_fallback.py — 利率数据取数兜底脚本（iFind MCP 不可用
      ✅ 已交叉验证：与 iFind 历史序列同日期值完全一致（2026-08-26 = 1.6887）
 
   B) DR007 加权平均利率      (iFind EDB index_id = L001619493, 单位 %, 日频 T-1)
-     → Wind EDB 指标代码 M1006337（"DR007"，来源：中国货币网，日频）
-     → 走本地 Wind CLI（非 MCP）：
+     →【源① 首选，2026-11-01 打通】中国货币网「质押式回购日报·存款类机构」
+         POST https://www.chinamoney.com.cn/ags/ms/cm-u-dlrp/PrDlyBltn
+         表单 lang=en / indexType=markInterBankVOList / searchDate=YYYY-MM-DD
+         取 records[].instrmntCd=="DR007" 的 wghtdAvgRepoRate（加权利率）
+       ✅ 免费、无需积分、无人值守可跑；已交叉验证 2026-10-26~10-30 共 5 个交易日
+         与库内 iFind/Wind 序列逐值完全一致。
+       ⚠️ 只支持单日查询（区间按日循环）；日报 22:00-22:30 发布，故盘中只能取到 T-1。
+     →【源② 降级】Wind EDB 指标代码 M1006337，走本地 Wind CLI（非 MCP）：
          cd ~/.agents/skills/wind-mcp-skill
          node scripts/cli.mjs call economic_data query_economic_indicator_data \
            '{"question":"M1006337","beginDate":"2026-08-27","endDate":"2026-09-09"}'
-     ✅ 已交叉验证（2026-09-09）：Wind 2026-08-26 = 1.4282，与现有 JSON（iFind 来源）完全一致。
-     ⚠️ 走 Wind 会消耗 Wind 积分；仅在 iFind MCP 不可用时启用（自动化的兜底路径）。
+       ⚠️ 2026-11-01 起 Wind 账户积分余额不足，此源实质失效；
+          脚本会嗅探 "积分余额不足" 并直接放弃（不再当抖动重试 3 次）。
      已排除的源（勿重踩）：
         - akshare.repo_rate_hist / repo_rate_query → 是 FDR007【定盘】利率，不是 DR007【加权平均】，禁用
         - R007 (M004039736) → 全市场含非银，与 DR007 不同指标，禁用
@@ -89,6 +95,93 @@ def fetch_cn10y(start: str, end: str):
     return rows
 
 
+# ---------------------------------------------------------------------------
+# DR007 源①（首选，2026-11-01 打通）：中国货币网「质押式回购日报·存款类机构」
+#   接口：POST https://www.chinamoney.com.cn/ags/ms/cm-u-dlrp/PrDlyBltn
+#         表单 lang=en & indexType=markInterBankVOList & searchDate=YYYY-MM-DD
+#   取 records[].instrmntCd == "DR007" 的 wghtdAvgRepoRate（加权利率）
+#   ✅ 口径验证（2026-11-01）：2026-10-26~10-30 共 5 个交易日与库内 iFind/Wind 序列
+#      逐值完全一致（1.3766 / 1.3500 / 1.3412 / 1.3418 / 1.3898）。
+#   ✅ 免费、无需积分、无人值守可跑，故取代 Wind CLI 成为首选兜底。
+#   ⚠️ 两个特性（务必知悉）：
+#      1) 接口只支持「单日」查询，区间需按日循环（一周约 7 次请求）。
+#      2) 日报于每交易日 22:00-22:30 更新 → 17:35 的定时任务只能取到 T-1，
+#         当日数据要等次日那轮才补得上，属预期（本看板本就是 T-1 口径）。
+# ---------------------------------------------------------------------------
+CM_DR007_URL = "https://www.chinamoney.com.cn/ags/ms/cm-u-dlrp/PrDlyBltn"
+CM_DR007_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Referer": "https://www.chinamoney.com.cn/chinese/mtdexdaily/?tab=2",
+}
+
+
+def fetch_dr007_chinamoney(start: str, end: str):
+    """DR007 加权平均利率 → 中国货币网质押式回购日报（存款类机构 DR 系列）。"""
+    try:
+        import requests
+        import urllib3
+        urllib3.disable_warnings()
+    except ImportError:
+        print("[dr007][SKIP] 未安装 requests，跳过中国货币网源", file=sys.stderr)
+        return []
+
+    d0 = datetime.strptime(start, "%Y%m%d")
+    d1 = datetime.strptime(end, "%Y%m%d")
+    rows, cur, fail, window_start = [], d0, 0, None
+
+    while cur <= d1:
+        ds = cur.strftime("%Y-%m-%d")
+        cur += timedelta(days=1)
+        try:
+            resp = requests.post(
+                CM_DR007_URL,
+                data={"lang": "en", "indexType": "markInterBankVOList",
+                      "searchDate": ds, "publishedTime": ""},
+                headers=CM_DR007_HEADERS, timeout=20, verify=False,
+            )
+            payload = resp.json()
+        except Exception as ex:
+            fail += 1
+            print(f"[dr007][WARN] 中国货币网 {ds} 请求异常: {ex}", file=sys.stderr)
+            continue
+
+        if str(payload.get("head", {}).get("rep_code")) != "200":
+            # 非交易日/无成交时 rep_code 仍为 200 但 records 为空，这里只记真异常
+            if payload.get("head", {}).get("rep_message"):
+                print(f"[dr007][WARN] 中国货币网 {ds} 返回 "
+                      f"{payload['head'].get('rep_message')}", file=sys.stderr)
+            continue
+
+        dd = payload.get("data") or {}
+        if window_start is None and dd.get("startDate"):
+            window_start = dd["startDate"]  # 接口只保留最近约 2 周，无法回溯补历史
+
+        for rec in payload.get("records") or []:
+            if rec.get("instrmntCd") == "DR007":
+                v = rec.get("wghtdAvgRepoRate")
+                if v not in (None, "", "null"):
+                    rows.append([ds, round(float(v), 4)])
+                break
+
+    if fail:
+        print(f"[dr007][WARN] 中国货币网共 {fail} 天请求失败", file=sys.stderr)
+    rows.sort(key=lambda x: x[0])
+    if rows:
+        print(f"[dr007][OK] 中国货币网取到 {len(rows)} 条：{rows[0][0]} ~ {rows[-1][0]}",
+              file=sys.stderr)
+    else:
+        msg = "[dr007][WARN] 中国货币网未取到 DR007"
+        if window_start:
+            msg += (f"（接口仅提供 {window_start} 起约 2 周的滚动窗口，"
+                    f"更早的缺口此源补不了，需走 Wind/iFind）")
+        print(msg, file=sys.stderr)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# DR007 源②（降级）：Wind EDB M1006337，走本地 CLI
+# ⚠️ 2026-11-01 起 Wind 账户积分余额不足，此源实质失效，仅在源①无数据时尝试。
+# ---------------------------------------------------------------------------
 WIND_SKILL_DIR = os.path.expanduser("~/.agents/skills/wind-mcp-skill")
 WIND_DR007_CODE = "M1006337"  # Wind EDB「DR007」，来源中国货币网，日频
 # Wind CLI 偶发瞬时失败（2026-09-16 实测：首次退出码 1 且 stderr 为空，重试即成功），
@@ -109,6 +202,15 @@ def _find_node() -> str:
 
 
 def fetch_dr007(start: str, end: str):
+    """DR007 加权平均利率：源①中国货币网（免费/首选）→ 源②Wind CLI（降级）。"""
+    rows = fetch_dr007_chinamoney(start, end)
+    if rows:
+        return rows
+    print("[dr007][INFO] 源①无数据，降级尝试 Wind CLI", file=sys.stderr)
+    return _fetch_dr007_wind(start, end)
+
+
+def _fetch_dr007_wind(start: str, end: str):
     """DR007 加权平均利率 → Wind EDB M1006337（走本地 CLI，不依赖 MCP）。"""
     if not os.path.isdir(WIND_SKILL_DIR):
         print(f"[dr007][SKIP] 未找到 Wind skill 目录 {WIND_SKILL_DIR}", file=sys.stderr)
@@ -140,6 +242,13 @@ def fetch_dr007(start: str, end: str):
         if r.returncode == 0 and (r.stdout or "").strip():
             res = r
             break
+        out = (r.stdout or "") + (r.stderr or "")
+        # ⚠️ 积分耗尽与网络抖动的日志表现完全一致（都是退出码 1 + 空 stderr），
+        #    必须先从 stdout 里嗅探真实原因，避免把"没钱了"当抖动重试 3 次。
+        if ("积分余额不足" in out) or ("backend_error" in out and "credits" in out.lower()):
+            print("[dr007][ERR] Wind 账户积分余额不足（不是网络抖动），源②失效。"
+                  "充值入口 https://market.windalice.com/#/user/credits", file=sys.stderr)
+            return []
         print(f"[dr007][WARN] 第 {attempt}/{WIND_CLI_RETRIES} 次 Wind CLI 失败 "
               f"(退出码 {r.returncode}): {(r.stderr or '').strip()[:200]}",
               file=sys.stderr)
