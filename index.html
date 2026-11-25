@@ -534,12 +534,13 @@
         <div class="f-row"><span class="f-label">数据来源：</span><span>东方财富（实时行情）· 腾讯财经（A股/港股/美股）· CoinGecko（比特币）· Wind 预取日K（日经/KOSPI/布伦特/黄金）· 中债网/中国货币网（利率）</span></div>
         <div class="f-row"><span class="f-label">数据口径：</span><span>非交易时段或实时不可用时，部分品种显示最近交易日收盘价，见卡片「收盘 MM/DD」角标；布伦特原油取数时仍在交易，显示「盘中价 MM/DD」（ICE 结算价北京次日 02:30 前后确定，次日自动修正为收盘价）；比特币 7×24 交易，实时不可用时显示「截至 MM/DD」（按 UTC 日切）。鼠标悬停可看交易所与日期明细</span></div>
         <div class="f-div"></div>
-        <div class="f-row"><span>仅供参考，不构成投资建议</span><span>·</span><span>页面每次打开自动刷新最新数据</span><span>·</span><span>v4.8</span></div>
+        <div class="f-row"><span>仅供参考，不构成投资建议</span><span>·</span><span>页面每次打开自动刷新最新数据</span><span>·</span><span>v4.9</span></div>
     </footer>
 
     <script>
         // ============================================================
-        //  全球指数智能看板 v4.8 — EM品种降级显示收盘价（不隐藏卡片）+ 口径角标
+        //  全球指数智能看板 v4.9 — EM品种降级显示收盘价（不隐藏卡片）+ 口径角标
+        //  v4.9：新增科创50（000688），排在创业板指与恒生指数之间；实时/日K沿用腾讯+东财双源
         //  v4.7：布伦特当日bar为盘中快照（17:40取数时ICE仍在交易），角标改显示「盘中价 MM/DD」
         //  v4.8：比特币涨跌幅基准改为"最近一个已完成交易日收盘"（原 closes[-2] 会把一天涨成两天）；
         //        BTC 实时不可用时不再隐藏卡片，降级显示K线收盘价 + 「截至 MM/DD」角标
@@ -570,6 +571,7 @@
         const INDEX_META = {
             "sh000001":  { name: "上证指数",     short: "SSE",    color: "#3b82f6", qqKline: "sh000001",  qqCode: "sh000001",  emSecid: "1.000001",   preferEM: true },
             "sz399006":  { name: "创业板指",     short: "CYB",    color: "#38bdf8", qqKline: "sz399006",  qqCode: "sz399006",  emSecid: "0.399006",   preferEM: true },
+            "sh000688":  { name: "科创50",       short: "STAR50", color: "#2dd4bf", qqKline: "sh000688",  qqCode: "sh000688",  emSecid: "1.000688",   preferEM: true },
             "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqKline: "hkHSI",     qqCode: "hkHSI",     emSecid: "100.HSI",    preferEM: true },
             "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqKline: "hkHSTECH",  qqCode: "hkHSTECH",  emSecid: "124.HSTECH", preferEM: true },
             "em_N225":   { name: "日经225", venue: "东京", short: "N225",   color: "#f472b6", qqKline: null,        qqCode: null,        emSecid: "100.N225",   klineFile: "n225_kline.json" },
@@ -583,8 +585,8 @@
             "crypto_BTC":{ name: "比特币",       short: "BTC",    color: "#f97316", qqKline: null,        qqCode: null,        emSecid: null,         unit: "USD",     isCrypto: true },
         };
 
-        // 13个品种全部加入显示队列（dr007 在 cn10y 前面）
-        const INDEX_ORDER = ["sh000001", "sz399006", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "em_AU9999", "dr007", "cn10y", "crypto_BTC"];
+        // 14个品种全部加入显示队列（科创50 在创业板指与恒生指数之间；dr007 在 cn10y 前面）
+        const INDEX_ORDER = ["sh000001", "sz399006", "sh000688", "hkHSI", "hkHSTECH", "em_N225", "em_KS11", "us.IXIC", "us.INX", "em_BRENT", "em_AU9999", "dr007", "cn10y", "crypto_BTC"];
 
         // 记录哪些指数数据可用（运行时检测）
         let availableIndices = new Set(INDEX_ORDER);
