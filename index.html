@@ -531,15 +531,17 @@
 
     <!-- 底部来源标识 -->
     <footer class="footer">
-        <div class="f-row"><span class="f-label">数据来源：</span><span>东方财富（实时行情）· 腾讯财经（A股/港股/美股）· CoinGecko（比特币）· Wind 预取日K（日经/KOSPI/布伦特/黄金）· 中债网/中国货币网（利率）</span></div>
+        <div class="f-row"><span class="f-label">数据来源：</span><span>东方财富（实时行情）· 腾讯财经（A股/港股/美股）· CoinGecko（比特币）· Wind 预取日K（11 个品种，在线K线不可用时兜底）· 中债网/中国货币网（利率）</span></div>
         <div class="f-row"><span class="f-label">数据口径：</span><span>非交易时段或实时不可用时，部分品种显示最近交易日收盘价，见卡片「收盘 MM/DD」角标；布伦特原油取数时仍在交易，显示「盘中价 MM/DD」（ICE 结算价北京次日 02:30 前后确定，次日自动修正为收盘价）；比特币 7×24 交易，实时不可用时显示「截至 MM/DD」（按 UTC 日切）。鼠标悬停可看交易所与日期明细</span></div>
         <div class="f-div"></div>
-        <div class="f-row"><span>仅供参考，不构成投资建议</span><span>·</span><span>页面每次打开自动刷新最新数据</span><span>·</span><span>v4.9</span></div>
+        <div class="f-row"><span>仅供参考，不构成投资建议</span><span>·</span><span>页面每次打开自动刷新最新数据</span><span>·</span><span>v5.0</span></div>
     </footer>
 
     <script>
         // ============================================================
-        //  全球指数智能看板 v4.9 — EM品种降级显示收盘价（不隐藏卡片）+ 口径角标
+        //  全球指数智能看板 v5.0 — 品种K线全量本地兜底 + 口径角标
+        //  v5.0：A/港/美股 7 个品种增加 Wind 预取本地JSON作为第三层兜底
+        //        （公司网封东财push2his + 腾讯fqkline被CORS拦时，主图不再空白，标题标「本地备份 · 截至 MM/DD」）
         //  v4.9：新增科创50（000688），排在创业板指与恒生指数之间；实时/日K沿用腾讯+东财双源
         //  v4.7：布伦特当日bar为盘中快照（17:40取数时ICE仍在交易），角标改显示「盘中价 MM/DD」
         //  v4.8：比特币涨跌幅基准改为"最近一个已完成交易日收盘"（原 closes[-2] 会把一天涨成两天）；
@@ -569,15 +571,15 @@
         // emSecid: 东方财富代码（K线备用+日韩实时）
         // preferEM: true = K线优先东方财富（有成交额），腾讯备用；false/省略 = 腾讯优先
         const INDEX_META = {
-            "sh000001":  { name: "上证指数",     short: "SSE",    color: "#3b82f6", qqKline: "sh000001",  qqCode: "sh000001",  emSecid: "1.000001",   preferEM: true },
-            "sz399006":  { name: "创业板指",     short: "CYB",    color: "#38bdf8", qqKline: "sz399006",  qqCode: "sz399006",  emSecid: "0.399006",   preferEM: true },
-            "sh000688":  { name: "科创50",       short: "STAR50", color: "#2dd4bf", qqKline: "sh000688",  qqCode: "sh000688",  emSecid: "1.000688",   preferEM: true },
-            "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqKline: "hkHSI",     qqCode: "hkHSI",     emSecid: "100.HSI",    preferEM: true },
-            "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqKline: "hkHSTECH",  qqCode: "hkHSTECH",  emSecid: "124.HSTECH", preferEM: true },
+            "sh000001":  { name: "上证指数",     short: "SSE",    color: "#3b82f6", qqKline: "sh000001",  qqCode: "sh000001",  emSecid: "1.000001",   preferEM: true, klineFile: "sse_kline.json" },
+            "sz399006":  { name: "创业板指",     short: "CYB",    color: "#38bdf8", qqKline: "sz399006",  qqCode: "sz399006",  emSecid: "0.399006",   preferEM: true, klineFile: "cyb_kline.json" },
+            "sh000688":  { name: "科创50",       short: "STAR50", color: "#2dd4bf", qqKline: "sh000688",  qqCode: "sh000688",  emSecid: "1.000688",   preferEM: true, klineFile: "star50_kline.json" },
+            "hkHSI":     { name: "恒生指数",     short: "HSI",    color: "#ea580c", qqKline: "hkHSI",     qqCode: "hkHSI",     emSecid: "100.HSI",    preferEM: true, klineFile: "hsi_kline.json" },
+            "hkHSTECH":  { name: "恒生科技指数", short: "HSTECH", color: "#fb923c", qqKline: "hkHSTECH",  qqCode: "hkHSTECH",  emSecid: "124.HSTECH", preferEM: true, klineFile: "hstech_kline.json" },
             "em_N225":   { name: "日经225", venue: "东京", short: "N225",   color: "#f472b6", qqKline: null,        qqCode: null,        emSecid: "100.N225",   klineFile: "n225_kline.json" },
             "em_KS11":   { name: "韩国KOSPI", venue: "韩国", short: "KOSPI",  color: "#94a3b8", qqKline: null,        qqCode: null,        emSecid: "100.KS11",   klineFile: "ks11_kline.json" },
-            "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#7c3aed", qqKline: "us.IXIC",   qqCode: "us.IXIC",   emSecid: "100.NDX" },
-            "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX" },
+            "us.IXIC":   { name: "纳斯达克综合", short: "IXIC",   color: "#7c3aed", qqKline: "us.IXIC",   qqCode: "us.IXIC",   emSecid: "100.NDX",  klineFile: "ixic_kline.json" },
+            "us.INX":    { name: "标普500",      short: "SPX",    color: "#c084fc", qqKline: "us.INX",    qqCode: "us.INX",    emSecid: "100.SPX",  klineFile: "spx_kline.json" },
             "em_BRENT":  { name: "布伦特原油", venue: "ICE期货", short: "BRENT",  color: "#eab308", qqKline: null,        qqCode: null,        emSecid: "112.B00Y",   unit: "美元/桶", isCommodity: true, klineFile: "brent_kline.json" },
             "em_AU9999": { name: "黄金AU9999", venue: "上海黄金交易所", short: "AU9999", color: "#fbbf24", qqKline: null,        qqCode: null,        emSecid: "118.AU9999", unit: "元/克",   isCommodity: true, klineFile: "au9999_kline.json" },
             "dr007":     { name: "DR007利率",    short: "DR007",  color: "#34d399", qqKline: null,        qqCode: null,        emSecid: null,         unit: "%",       isYield: true, yieldFile: "dr007_rate.json" },
@@ -1165,18 +1167,27 @@
                 };
 
                 if (meta.preferEM) {
-                    // A股/港股：东方财富优先（有成交额），腾讯备用
+                    // A股/港股：东方财富优先（有成交额）→ 腾讯备用 → 本地预取JSON最终兜底
                     parsed = await tryEM();
                     if (!parsed) {
                         console.warn(`[EM] ${secid} 失败，降级腾讯K线`);
                         parsed = await tryQQ();
                     }
+                    // 公司网封 push2his + 腾讯 fqkline 被 CORS 拦时，两个在线源会同时失效
+                    if (!parsed && meta.klineFile) {
+                        console.warn(`[EM/QQ] ${secid} 在线K线均失败，降级本地预取JSON`);
+                        parsed = await tryLocal();
+                    }
                 } else if (meta.qqKline) {
-                    // 美股：腾讯优先，东方财富备用
+                    // 美股：腾讯优先 → 东方财富备用 → 本地预取JSON最终兜底
                     parsed = await tryQQ();
                     if (!parsed) {
                         console.warn(`[QQ] ${secid} 失败，降级东方财富K线`);
                         parsed = await tryEM();
+                    }
+                    if (!parsed && meta.klineFile) {
+                        console.warn(`[QQ/EM] ${secid} 在线K线均失败，降级本地预取JSON`);
+                        parsed = await tryLocal();
                     }
                 } else {
                     // 日韩/商品：本地JSON(Wind预取)优先 → EM(push2his,公司网被封基本失败)兜底
@@ -2034,7 +2045,15 @@
             if (!data) return;
 
             const kltLabel = currentKlt === 103 ? "月线" : currentKlt === 102 ? "周线" : "日线";
-            document.getElementById("chartTitle").textContent = `${meta.name} - ${kltLabel}走势`;
+            const titleEl = document.getElementById("chartTitle");
+            titleEl.textContent = `${meta.name} - ${kltLabel}走势`;
+            // 在线K线两源都失败、改用每日预取的本地JSON时，把数据截止日标在标题旁
+            // meta.qqCode 用于区分：原4个EM品种本地JSON本就是主源，不需要标"备份"
+            if (data.klineSource === "local" && meta.qqCode) {
+                const d = data.klineLastDate || (data.dates && data.dates[data.dates.length - 1]) || "";
+                const md = d.length >= 10 ? `${d.slice(5, 7)}/${d.slice(8, 10)}` : d;
+                titleEl.insertAdjacentHTML("beforeend", ` <span class="stale-badge" title="在线行情接口不可用，走势由每日预取的本地数据绘制，数据截至 ${d}">本地备份 · 截至 ${md}</span>`);
+            }
 
             // 判断是否有真实成交额数据：amounts 数组中存在非零值
             const amounts = data.amounts || [];

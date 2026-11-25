@@ -1,17 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-update_em_klines.py — 4个EM品种(日经225/KOSPI/布伦特/AU9999)历史日K更新器
+update_em_klines.py — 11个品种历史日K更新器
 ------------------------------------------------------------------
 数据源：Wind get_index_kline（index_data，日K开收高低）
-  - EM push2his 被公司网网络层封堵（本地/浏览器均不通），Wind 是唯一可用源
-  - 日经225=N225.GI, KOSPI=KS11.GI, 布伦特=布伦特原油(自然语言), AU9999=AU9999
-产物：n225_kline.json / ks11_kline.json / brent_kline.json / au9999_kline.json
-  格式与 btc_kline.json 一致：dates/opens/highs/lows/closes/updated/source/name/unit
-前端：index.html 读 JSON 画历史K线(T-1及以前)，今日 bar 由 EM 实时价拟合，YTD=现价/年初首收盘-1
+  - EM push2his 被公司网封堵；腾讯 fqkline 从 github.io 源被 CORS 拦截
+    → 浏览器端两个在线K线源都可能拿不到，本地预取 JSON 是最终兜底
+  - 原4个EM品种：日经225=N225.GI, KOSPI=KS11.GI, 布伦特=布伦特原油, AU9999=AU9999
+  - 新增7个A/港/美股：000001.SH / 399006.SZ / 000688.SH / HSI.HI / HSTECH.HI / IXIC.GI / SPX.GI
+产物：n225/ks11/brent/au9999 + sse/cyb/star50/hsi/hstech/ixic/spx 共11个 *_kline.json
+  格式一致：dates/opens/highs/lows/closes/updated/source/name/unit
+前端：index.html 在线K线失败时读对应 JSON 画历史走势，今日 bar 由实时价拟合
 
 用法：
-  python update_em_klines.py            # 增量：拉最近15天合并进现有JSON（日常17:40自动化用）
-  python update_em_klines.py --full     # 全量：从2020-01-01重建（首次/修复用）
+  python update_em_klines.py            # 增量：拉最近30天合并进现有JSON（日常17:40自动化用）
+                                        #   本地无该品种JSON时自动改拉全量，补齐历史
+  python update_em_klines.py --full     # 全量：从2020-01-01重建全部品种（修复用）
   python update_em_klines.py --push     # 更新后执行 git add/commit + git_push_with_retry.py
 健全性校验：条数下限、末日不回退、收盘价合理区间；失败保留旧文件不动
 """
@@ -49,6 +52,16 @@ INDICES = {
     "ks11":   {"windcode": "KS11.GI",   "file": "ks11_kline.json",   "name": "韩国KOSPI",   "unit": "点",     "lo": 1000,  "hi": 10000,  "intraday_at_fetch": False},
     "brent":  {"windcode": "布伦特原油", "file": "brent_kline.json",  "name": "布伦特原油", "unit": "美元/桶", "lo": 5,     "hi": 500,    "intraday_at_fetch": True},
     "au9999": {"windcode": "AU9999",    "file": "au9999_kline.json", "name": "黄金AU9999",  "unit": "元/克",  "lo": 100,   "hi": 2000,   "intraday_at_fetch": False},
+    # 新增 7 个 A/港/美股：浏览器端两个在线K线源都失败时的最终兜底
+    # 17:40 取数时 A股(15:00)、港股(16:00) 已收盘；美股当日尚未开盘，末根=前一交易日真收盘
+    # → 全部 intraday_at_fetch=False，不写 unsettled_date
+    "sse":    {"windcode": "000001.SH", "file": "sse_kline.json",    "name": "上证指数",     "unit": "点", "lo": 1000, "hi": 10000, "intraday_at_fetch": False},
+    "cyb":    {"windcode": "399006.SZ", "file": "cyb_kline.json",    "name": "创业板指",     "unit": "点", "lo": 500,  "hi": 10000, "intraday_at_fetch": False},
+    "star50": {"windcode": "000688.SH", "file": "star50_kline.json", "name": "科创50",       "unit": "点", "lo": 300,  "hi": 5000,  "intraday_at_fetch": False},
+    "hsi":    {"windcode": "HSI.HI",    "file": "hsi_kline.json",    "name": "恒生指数",     "unit": "点", "lo": 5000, "hi": 60000, "intraday_at_fetch": False},
+    "hstech": {"windcode": "HSTECH.HI", "file": "hstech_kline.json", "name": "恒生科技指数", "unit": "点", "lo": 1000, "hi": 20000, "intraday_at_fetch": False},
+    "ixic":   {"windcode": "IXIC.GI",   "file": "ixic_kline.json",   "name": "纳斯达克综合", "unit": "点", "lo": 2000, "hi": 60000, "intraday_at_fetch": False},
+    "spx":    {"windcode": "SPX.GI",    "file": "spx_kline.json",    "name": "标普500",      "unit": "点", "lo": 1000, "hi": 20000, "intraday_at_fetch": False},
 }
 
 
@@ -123,9 +136,12 @@ def load_existing(path):
 def update_one(key, cfg, full):
     path = os.path.join(SCRIPT_DIR, cfg["file"])
     today = datetime.date.today()
-    if full:
+    old_kv = {} if full else load_existing(path)
+    # 首次出现的品种（本地还没有 JSON）自动拉全量历史，避免只写最近30天导致 YTD 走势残缺
+    auto_full = (not full and not old_kv)
+    if full or auto_full:
         begin, end = FULL_BEGIN, today.strftime("%Y-%m-%d")
-        log(f"[{key}] 全量模式：{begin} ~ {end}（{cfg['name']} / {cfg['windcode']}）")
+        log(f"[{key}] {'全量' if full else '首次自动全量'}模式：{begin} ~ {end}（{cfg['name']} / {cfg['windcode']}）")
     else:
         begin = (today - datetime.timedelta(days=INCR_DAYS)).strftime("%Y-%m-%d")
         end = today.strftime("%Y-%m-%d")
@@ -135,7 +151,6 @@ def update_one(key, cfg, full):
     new_kv = rows_to_kv(rows)
     log(f"[{key}] Wind 返回 {len(new_kv)} 条（{min(new_kv)} ~ {max(new_kv)}）")
 
-    old_kv = {} if full else load_existing(path)
     before_last = max(old_kv) if old_kv else None
 
     merged = dict(old_kv)
@@ -143,7 +158,7 @@ def update_one(key, cfg, full):
     dates = sorted(merged.keys())
 
     # 健全性校验
-    min_rows = 1500 if full else 1
+    min_rows = 1500 if (full or auto_full) else 1
     if len(dates) < min_rows:
         raise RuntimeError(f"[{key}] 条数 {len(dates)} 异常少（期望>={min_rows}），保留旧文件")
     if before_last and dates[-1] < before_last:
@@ -176,7 +191,7 @@ def update_one(key, cfg, full):
 def git_push(files):
     try:
         subprocess.run(["git", "add"] + files, cwd=SCRIPT_DIR, check=True, capture_output=True)
-        msg = f"chore: EM品种K线自动更新 ({datetime.date.today().strftime('%Y-%m-%d')})"
+        msg = f"chore: 11个品种K线自动更新 ({datetime.date.today().strftime('%Y-%m-%d')})"
         subprocess.run(["git", "commit", "-m", msg], cwd=SCRIPT_DIR, check=False, capture_output=True)
         r = subprocess.run([sys.executable, "git_push_with_retry.py"], cwd=SCRIPT_DIR, capture_output=True, text=True, encoding="utf-8", errors="replace")
         log((r.stdout or "").strip())
